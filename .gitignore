@@ -1,0 +1,22 @@
+# Rocq build products
+*.vo
+*.vos
+*.vok
+*.glob
+.*.aux
+.lia.cache
+.nia.cache
+Makefile.rocq
+Makefile.rocq.conf
+.Makefile.rocq.d
+
+# OCaml and extracted sources
+_build/
+*.cmi
+*.cmo
+*.cmx
+*.o
+ocaml/generated/*.ml
+ocaml/generated/*.mli
+
+.DS_Store

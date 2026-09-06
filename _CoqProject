@@ -1,0 +1,7 @@
+-Q theories DILLref
+
+theories/Ty.v
+theories/Syntax.v
+theories/OPE.v
+theories/Split.v
+theories/Examples.v
