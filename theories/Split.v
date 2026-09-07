@@ -10,12 +10,13 @@
     with de Bruijn indices it also renames the term.
 
     A split is the same thing as an availability mask together with its
-    complement ([OPE.v]), and splitting masks pointwise ([SplitU]) is the same
-    as splitting the positioned views of the scope. *)
+    complement, interpreted as embeddings by [OPE.v]. Pointwise mask
+    splitting ([SplitM] from [Mask.v]) corresponds to splitting the positioned
+    views of the scope. *)
 
 From Stdlib Require Import List Permutation Arith Lia.
 Import ListNotations.
-From DILLref Require Import OPE.
+From DILLref Require Import Mask OPE.
 
 Section Split.
   Context {A : Type}.
@@ -68,7 +69,8 @@ Section Split.
   (** ** Associativity
 
       Regrouping a three-way division produces the intermediate part as a
-      witness; it is unique but only its existence is needed. *)
+      witness. With repeated elements, different witnesses may satisfy the
+      conclusion; only existence is asserted. *)
 
   Lemma split_assoc : forall l ab c a b,
     Split l ab c -> Split ab a b ->
@@ -128,9 +130,82 @@ Section Split.
     - constructor. apply IHls.
   Qed.
 
-  (** ** Complementary masks are a [Split] *)
+  (** ** Transport through permutations
 
-  Definition mask_compl (U : list bool) : list bool := map negb U.
+      Reordering the whole list may reorder each part. Membership of the
+      parts is preserved with multiplicity; no uniqueness or decidable
+      equality assumption is needed. *)
+  Lemma split_permutation_transport : forall l l',
+    Permutation l l' -> forall ls rs, Split l ls rs ->
+    exists ls' rs', Split l' ls' rs' /\
+      Permutation ls ls' /\ Permutation rs rs'.
+  Proof.
+    intros l l' Hp. induction Hp as
+      [ | x l l' Hp IH | x y l | l m n Hlm IHlm Hmn IHmn ]; intros ls rs Hs.
+    - apply split_nil_inv in Hs. destruct Hs as [-> ->].
+      exists [], []. repeat constructor.
+    - apply split_cons_inv in Hs.
+      destruct Hs as [[xs [-> Hs]] | [ys [-> Hs]]];
+        destruct (IH _ _ Hs) as [xs' [ys' [Ht [Hl Hr]]]].
+      + exists (x :: xs'), ys'. split; [constructor; exact Ht | ].
+        split; [constructor; exact Hl | exact Hr].
+      + exists xs', (x :: ys'). split; [constructor; exact Ht | ].
+        split; [exact Hl | constructor; exact Hr].
+    - apply split_cons_inv in Hs.
+      destruct Hs as [[xs [-> Hs]] | [ys [-> Hs]]];
+        apply split_cons_inv in Hs;
+        destruct Hs as [[xs' [-> Hs]] | [ys' [-> Hs]]].
+      + exists (x :: y :: xs'), rs.
+        split; [constructor; constructor; exact Hs | ].
+        split; [apply perm_swap | apply Permutation_refl].
+      + exists (y :: xs), (x :: ys').
+        split; [apply SplitR, SplitL; exact Hs | ].
+        split; apply Permutation_refl.
+      + exists (x :: xs'), (y :: ys).
+        split; [apply SplitL, SplitR; exact Hs | ].
+        split; apply Permutation_refl.
+      + exists ls, (x :: y :: ys').
+        split; [apply SplitR, SplitR; exact Hs | ].
+        split; [apply Permutation_refl | apply perm_swap].
+    - destruct (IHlm _ _ Hs) as [xs [ys [Hm [Hl Hr]]]].
+      destruct (IHmn _ _ Hm) as [xs' [ys' [Hn [Hl' Hr']]]].
+      exists xs', ys'. split; [exact Hn | ].
+      split; eapply Permutation_trans; eassumption.
+  Qed.
+
+  Lemma split_permutation_iff : forall l ls rs,
+    Permutation l (ls ++ rs) <->
+    exists ls' rs', Split l ls' rs' /\
+      Permutation ls ls' /\ Permutation rs rs'.
+  Proof.
+    intros l ls rs. split.
+    - intros Hp. eapply split_permutation_transport.
+      + apply Permutation_sym. exact Hp.
+      + apply split_app.
+    - intros [ls' [rs' [Hs [Hl Hr]]]].
+      eapply Permutation_trans; [apply split_permutation; exact Hs | ].
+      apply Permutation_app; apply Permutation_sym; assumption.
+  Qed.
+
+  (** Keys identify resources independently of the payload. Uniqueness of
+      projected keys is transported along the whole-list permutation. *)
+  Lemma split_keyed_permutation_iff : forall {K : Type} (key : A -> K) l ls rs,
+    (Permutation l (ls ++ rs) /\ NoDup (map key (ls ++ rs))) <->
+    (NoDup (map key l) /\
+      exists ls' rs', Split l ls' rs' /\
+        Permutation ls ls' /\ Permutation rs rs').
+  Proof.
+    intros K key l ls rs. split.
+    - intros [Hp Hnd]. split.
+      + eapply Permutation_NoDup; [ | exact Hnd].
+        apply Permutation_map, Permutation_sym. exact Hp.
+      + apply split_permutation_iff. exact Hp.
+    - intros [Hnd Hs]. apply split_permutation_iff in Hs. split; [exact Hs | ].
+      eapply Permutation_NoDup; [ | exact Hnd].
+      apply Permutation_map. exact Hs.
+  Qed.
+
+  (** ** Complementary masks are a [Split] *)
 
   Lemma ope_compl_split : forall L U G G',
     ope L U G -> ope L (mask_compl U) G' -> Split L G G'.
@@ -152,47 +227,25 @@ Section Split.
     - exists (false :: U). split; simpl; constructor; assumption.
   Qed.
 
-  (** TODO: transport of [Split] along permutations of the whole list and
-      the converse of [split_permutation] up to reordering inside the parts,
-      which is what relates [Split] to [active_split] in the SCIR development.
-      TODO: pointwise intersection of masks for affine branch leftovers. *)
 End Split.
 
-(** ** Pointwise splitting of masks
+(** ** Mask splitting and positioned views *)
 
-    [SplitU I U F]: every available position of [I] is available in exactly
-    one of [U] and [F]; an unavailable position is available in neither. *)
-Inductive SplitU : list bool -> list bool -> list bool -> Prop :=
-  | SplitU_nil : SplitU [] [] []
-  | SplitU_off : forall I U F,
-      SplitU I U F -> SplitU (false :: I) (false :: U) (false :: F)
-  | SplitU_left : forall I U F,
-      SplitU I U F -> SplitU (true :: I) (true :: U) (false :: F)
-  | SplitU_right : forall I U F,
-      SplitU I U F -> SplitU (true :: I) (false :: U) (true :: F).
-
-Lemma splitU_length : forall I U F,
-  SplitU I U F -> length U = length I /\ length F = length I.
-Proof. intros I U F H. induction H; simpl; lia. Qed.
-
-Lemma splitU_comm : forall I U F, SplitU I U F -> SplitU I F U.
-Proof. intros I U F H. induction H; constructor; assumption. Qed.
-
-Lemma splitU_view : forall I U F,
-  SplitU I U F ->
+Lemma splitM_view : forall I U F,
+  SplitM I U F ->
   forall {A : Type} n (L : list A),
     Split (view_from n L I) (view_from n L U) (view_from n L F).
 Proof.
   intros I U F H. induction H; intros A n [| x L]; simpl; try constructor;
-    try apply IHSplitU; constructor.
+    try apply IHSplitM; constructor.
 Qed.
 
 (** The converse relies on positions: with types alone two resources of the
     same type could not be told apart. *)
-Lemma view_splitU : forall {A : Type} (L : list A) I U F n,
+Lemma view_splitM : forall {A : Type} (L : list A) I U F n,
   wf_mask L I -> wf_mask L U -> wf_mask L F ->
   Split (view_from n L I) (view_from n L U) (view_from n L F) ->
-  SplitU I U F.
+  SplitM I U F.
 Proof.
   unfold wf_mask. intros A L.
   induction L as [| x L IH]; intros [| i I] [| u U] [| f F] n HI HU HF H;

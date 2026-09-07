@@ -20,3 +20,5 @@ ocaml/generated/*.ml
 ocaml/generated/*.mli
 
 .DS_Store
+*.pdf
+*.zip

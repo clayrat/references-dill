@@ -9,6 +9,11 @@
 
 open Dillref
 
+(* Display-only conversion for the small bundled examples. This non-tail-
+   recursive traversal can overflow the stack on large Peano naturals and
+   assumes the result fits in an OCaml int.
+   TODO: use a tail-recursive conversion with explicit range checking before
+   printing arbitrary input. *)
 let rec int_of_nat = function
   | O -> 0
   | S n -> 1 + int_of_nat n
@@ -45,7 +50,9 @@ let rec pp = function
   | Bang e -> "!" ^ pp_atom e
   | LetBang (e1, e2) -> "let !u0 = " ^ pp e1 ^ " in " ^ pp e2
   | Nat n -> string_of_int (int_of_nat n)
-  | Plus (e1, e2) -> pp_atom e1 ^ " + " ^ pp_atom e2
+  | Succ e -> "succ " ^ pp_atom e
+  | Iter (count, step, seed) ->
+      "iter " ^ pp_atom count ^ " " ^ pp_atom step ^ " " ^ pp_atom seed
   | Bool b -> string_of_bool b
   | If (c, e1, e2) ->
       "if " ^ pp c ^ " then " ^ pp e1 ^ " else " ^ pp e2
@@ -73,6 +80,39 @@ let () =
         incr failures
       end)
     source_examples;
+  List.iter
+    (fun (name, (actual, expected)) ->
+      if actual <> expected then begin
+        Printf.eprintf "%s: got %s, expected %s\n" name (pp actual) (pp expected);
+        incr failures
+      end)
+    binding_examples;
+  List.iter
+    (fun (name, (actual, expected)) ->
+      if actual <> expected then begin
+        let describe = function
+          | Some e -> pp e
+          | None -> "unbound name"
+        in
+        Printf.eprintf "%s: resolved to %s, expected %s\n"
+          name (describe actual) (describe expected);
+        incr failures
+      end)
+    resolution_examples;
+  List.iter
+    (fun (name, (actual, expected)) ->
+      if actual <> expected then begin
+        Printf.eprintf "%s: store update differs from the expected store\n" name;
+        incr failures
+      end)
+    store_examples;
+  List.iter
+    (fun (name, (actual, expected)) ->
+      if actual <> expected then begin
+        Printf.eprintf "%s: address occurrences differ from the expected list\n" name;
+        incr failures
+      end)
+    location_examples;
   if not (ty_eqb (TLolli (TNat, TNat)) (TLolli (TNat, TNat)))
      || ty_eqb (TTensor (TNat, TNat)) (TWith (TNat, TNat))
   then begin
@@ -80,4 +120,8 @@ let () =
     incr failures
   end;
   Printf.printf "Source examples: %d checked\n" (List.length source_examples);
+  Printf.printf "Binding examples: %d checked\n" (List.length binding_examples);
+  Printf.printf "Name resolution: %d checked\n" (List.length resolution_examples);
+  Printf.printf "Store updates: %d checked\n" (List.length store_examples);
+  Printf.printf "Address traversals: %d checked\n" (List.length location_examples);
   if !failures > 0 then exit 1

@@ -11,7 +11,7 @@
       [B] at index 0 and [A] at index 1;
     - [LetBang e1 e2] extends only the shared scope, with the unbanged type
       at index 0;
-    - [LetUnit] and [If] bind nothing.
+    - [LetUnit], [If] and [Iter] bind nothing.
 
     A consumed resource position is never removed from the scope by the
     checker: the scope stays fixed and a separate availability mask records
@@ -19,9 +19,18 @@
 
     [Loc l] is a runtime store address. It is not a binding index, it is
     untouched by renaming and substitution, and it is rejected in source
-    programs: [loc_free] is a precondition of the user-facing checker. *)
+    programs: [loc_free] is a precondition of the user-facing checker.
 
-From Stdlib Require Import Bool.
+    Natural numbers use literals [Nat n], a strict successor [Succ e], and
+    a fully applied linear iterator [Iter count step seed] with argument
+    types [nat], [!(A ⊸ A)] and [A] and result [A]. The three arguments
+    divide the resource context; the step thunk is re-evaluated at each
+    iteration and only the accumulator carries resources between iterations.
+    Addition is a derived program.
+
+    TODO: operational rules for [Succ] and [Iter] with the store semantics. *)
+
+From Stdlib Require Import Bool List.
 From DILLref Require Import Ty.
 
 (** Linear mode forbids weakening of resource hypotheses; affine mode allows
@@ -53,7 +62,8 @@ Inductive term : Type :=
   | LetBang : term -> term -> term        (** [let !u = e1 in e2] *)
   (** Base types [nat] and [bool] *)
   | Nat : nat -> term
-  | Plus : term -> term -> term
+  | Succ : term -> term                   (** strict successor *)
+  | Iter : term -> term -> term -> term  (** count, boxed step, seed *)
   | Bool : bool -> term
   | If : term -> term -> term -> term
   (** References [ref A] *)
@@ -66,12 +76,34 @@ Fixpoint loc_free (e : term) : bool :=
   match e with
   | LVar _ | UVar _ | Unit | Nat _ | Bool _ => true
   | Loc _ => false
-  | Lam _ e | Fst e | Snd e | Bang e | New e | Free e => loc_free e
+  | Lam _ e | Fst e | Snd e | Bang e | Succ e | New e | Free e => loc_free e
   | App e1 e2 | LetUnit e1 e2 | Pair e1 e2 | LetPair e1 e2 | With e1 e2
-  | LetBang e1 e2 | Plus e1 e2 | Swap e1 e2 => loc_free e1 && loc_free e2
-  | If c e1 e2 => loc_free c && loc_free e1 && loc_free e2
+  | LetBang e1 e2 | Swap e1 e2 => loc_free e1 && loc_free e2
+  | If c e1 e2 | Iter c e1 e2 => loc_free c && loc_free e1 && loc_free e2
   end.
 
-(** TODO: named surface syntax and name resolution into this core, with
-    lexical shadowing and a correctness statement relating the named judgment
-    to the indexed one. *)
+(** Runtime values. Lambda bodies, promotion bodies and additive components
+    are suspended; multiplicative pairs evaluate both components. *)
+Inductive value : term -> Prop :=
+  | ValueLoc : forall l, value (Loc l)
+  | ValueLam : forall a e, value (Lam a e)
+  | ValueUnit : value Unit
+  | ValuePair : forall e1 e2, value e1 -> value e2 -> value (Pair e1 e2)
+  | ValueWith : forall e1 e2, value (With e1 e2)
+  | ValueBang : forall e, value (Bang e)
+  | ValueNat : forall n, value (Nat n)
+  | ValueBool : forall b, value (Bool b).
+
+(** Address occurrences include suspended bodies. Membership is used as a
+    set of edges: repeated occurrences in additive branches are not distinct
+    ownership rights. Multiplicative disjointness is a typing condition. *)
+Fixpoint locations (e : term) : list nat :=
+  match e with
+  | Loc l => cons l nil
+  | LVar _ | UVar _ | Unit | Nat _ | Bool _ => nil
+  | Lam _ e | Fst e | Snd e | Bang e | Succ e | New e | Free e => locations e
+  | App e1 e2 | LetUnit e1 e2 | Pair e1 e2 | LetPair e1 e2 | With e1 e2
+  | LetBang e1 e2 | Swap e1 e2 => List.app (locations e1) (locations e2)
+  | If c e1 e2 | Iter c e1 e2 =>
+      List.app (locations c) (List.app (locations e1) (locations e2))
+  end.

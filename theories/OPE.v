@@ -1,6 +1,6 @@
 (** * Order-preserving embeddings as availability masks
 
-    A mask [U : list bool] over a scope [L] selects the positions that are
+    A mask [U : mask] over a scope [L] selects the positions that are
     still available; consuming a resource flips its position to [false]
     without removing it from [L], so every other index keeps its meaning.
 
@@ -16,7 +16,8 @@
     remain distinguishable; this is what makes the correspondence between
     mask splitting and list splitting in [Split.v] exact. *)
 
-From Stdlib Require Import List Bool Arith Lia.
+From Stdlib Require Import List Arith Lia.
+From DILLref Require Import Prelude Mask.
 Import ListNotations.
 
 Section OPE.
@@ -24,13 +25,13 @@ Section OPE.
 
   (** ** Masks as embeddings *)
 
-  Inductive ope : list A -> list bool -> list A -> Prop :=
-    | ope_nil : ope [] [] []
-    | ope_drop : forall x L U G, ope L U G -> ope (x :: L) (false :: U) G
-    | ope_keep : forall x L U G, ope L U G -> ope (x :: L) (true :: U) (x :: G).
+  Inductive ope : list A -> mask -> list A -> Prop :=
+    | OpeNil : ope [] [] []
+    | OpeDrop : forall x L U G, ope L U G -> ope (x :: L) (false :: U) G
+    | OpeKeep : forall x L U G, ope L U G -> ope (x :: L) (true :: U) (x :: G).
 
   (** The elements selected by a mask: the available resource context. *)
-  Fixpoint select (L : list A) (U : list bool) : list A :=
+  Fixpoint select (L : list A) (U : mask) : list A :=
     match L, U with
     | x :: L', true :: U' => x :: select L' U'
     | _ :: L', false :: U' => select L' U'
@@ -39,21 +40,21 @@ Section OPE.
 
   (** Selected elements together with their positions in the full scope,
       counted from [n]. *)
-  Fixpoint view_from (n : nat) (L : list A) (U : list bool) : list (nat * A) :=
+  Fixpoint view_from (n : nat) (L : list A) (U : mask) : list (nat * A) :=
     match L, U with
     | x :: L', true :: U' => (n, x) :: view_from (S n) L' U'
     | _ :: L', false :: U' => view_from (S n) L' U'
     | _, _ => []
     end.
 
-  Definition view (L : list A) (U : list bool) : list (nat * A) :=
+  Definition view (L : list A) (U : mask) : list (nat * A) :=
     view_from 0 L U.
-
-  Definition wf_mask (L : list A) (U : list bool) : Prop :=
-    length U = length L.
 
   Lemma ope_length : forall L U G, ope L U G -> wf_mask L U.
   Proof. unfold wf_mask. intros L U G H. induction H; simpl; auto. Qed.
+
+  Lemma ope_count : forall L U G, ope L U G -> mask_count U = length G.
+  Proof. intros L U G H. induction H; simpl; congruence. Qed.
 
   Lemma ope_select : forall L U, wf_mask L U -> ope L U (select L U).
   Proof.
@@ -90,30 +91,12 @@ Section OPE.
 
   (** ** Identity, weakening and composition *)
 
-  Definition mask_id (L : list A) : list bool := repeat true (length L).
-
-  Lemma ope_id : forall L, ope L (mask_id L) L.
+  Lemma ope_id : forall L, ope L (mask_id (length L)) L.
   Proof. induction L; simpl; constructor; assumption. Qed.
 
   (** [G] embeds into [x :: G] by dropping the new position. *)
-  Definition mask_wk (G : list A) : list bool := false :: mask_id G.
-
-  Lemma ope_wk : forall x G, ope (x :: G) (mask_wk G) G.
+  Lemma ope_wk : forall x G, ope (x :: G) (mask_wk (length G)) G.
   Proof. intros. constructor. apply ope_id. Qed.
-
-  (** [mask_comp U V] first restricts by [U], then by [V] inside the kept
-      positions. The [true]-with-empty-[V] branch is unreachable for
-      well-formed inputs and is chosen to drop the position. *)
-  Fixpoint mask_comp (U V : list bool) : list bool :=
-    match U with
-    | [] => []
-    | false :: U' => false :: mask_comp U' V
-    | true :: U' =>
-        match V with
-        | v :: V' => v :: mask_comp U' V'
-        | [] => false :: mask_comp U' []
-        end
-    end.
 
   Lemma ope_comp : forall L U G V H,
     ope L U G -> ope G V H -> ope L (mask_comp U V) H.
@@ -125,55 +108,58 @@ Section OPE.
     - inversion HV; subst; simpl; constructor; apply IH; assumption.
   Qed.
 
-  Lemma mask_comp_id_l : forall L U G, ope L U G -> mask_comp (mask_id L) U = U.
-  Proof. intros L U G H. induction H; simpl; f_equal; assumption. Qed.
+  Lemma ope_comp_id_l : forall L U G,
+    ope L U G -> mask_comp (mask_id (length L)) U = U.
+  Proof.
+    intros L U G H. pose proof (ope_length _ _ _ H) as Hlen.
+    unfold wf_mask in Hlen. rewrite <- Hlen. apply mask_comp_id_l.
+  Qed.
 
-  Lemma mask_comp_id_r : forall L U G, ope L U G -> mask_comp U (mask_id G) = U.
-  Proof. intros L U G H. induction H; simpl; f_equal; assumption. Qed.
+  Lemma ope_comp_id_r : forall L U G,
+    ope L U G -> mask_comp U (mask_id (length G)) = U.
+  Proof.
+    intros L U G H. rewrite <- (ope_count _ _ _ H). apply mask_comp_id_r.
+  Qed.
 
-  Lemma mask_comp_assoc : forall L U G V H W,
+  Lemma ope_comp_assoc : forall L U G V H W,
     ope L U G -> ope G V H ->
     mask_comp (mask_comp U V) W = mask_comp U (mask_comp V W).
   Proof.
-    intros L U G V H W HU. revert V H W.
-    induction HU as [| x L U G HU IH | x L U G HU IH]; intros V H W HV.
-    - reflexivity.
-    - simpl. f_equal. eapply IH, HV.
-    - inversion HV; subst; simpl.
-      + f_equal. eapply IH; eassumption.
-      + destruct W as [| w W]; simpl; f_equal; eapply IH; eassumption.
+    intros L U G V H W HU HV. apply mask_comp_assoc.
+    rewrite (ope_count _ _ _ HU). apply (ope_length _ _ _ HV).
   Qed.
 
   (** ** Action on de Bruijn indices
 
-      [ren U i] maps index [i] of the embedded scope to its index in the full
-      scope: every dropped position in front of it shifts it by one. *)
-  Fixpoint ren (U : list bool) (i : nat) : nat :=
+      [ope_index U i] maps index [i] of the embedded scope to its index in
+      the full scope: every dropped position in front of it shifts it by
+      one. *)
+  Fixpoint ope_index (U : mask) (i : nat) : nat :=
     match U with
     | [] => i
-    | true :: U' => match i with 0 => 0 | S i' => S (ren U' i') end
-    | false :: U' => S (ren U' i)
+    | true :: U' => match i with 0 => 0 | S i' => S (ope_index U' i') end
+    | false :: U' => S (ope_index U' i)
     end.
 
-  Lemma ren_nth : forall L U G i a,
-    ope L U G -> nth_error G i = Some a -> nth_error L (ren U i) = Some a.
+  Lemma ope_index_nth : forall L U G i a,
+    ope L U G -> In_opt a (nth_error G i) -> In_opt a (nth_error L (ope_index U i)).
   Proof.
     intros L U G i a H. revert i.
     induction H as [| x L U G H IH | x L U G H IH]; intros i Hi; simpl.
-    - destruct i; discriminate.
+    - destruct i; simpl in Hi; contradiction.
     - apply IH, Hi.
     - destruct i; simpl in *; [exact Hi | apply IH, Hi].
   Qed.
 
-  Lemma ren_id : forall L i, ren (mask_id L) i = i.
+  Lemma ope_index_id : forall n i, ope_index (mask_id n) i = i.
   Proof.
-    induction L as [| x L IH]; intros i; simpl.
+    induction n as [| n IH]; intros i; simpl.
     - reflexivity.
     - destruct i; simpl; [reflexivity | f_equal; apply IH].
   Qed.
 
-  Lemma ren_comp : forall L U G V H i,
-    ope L U G -> ope G V H -> ren (mask_comp U V) i = ren U (ren V i).
+  Lemma ope_index_comp : forall L U G V H i,
+    ope L U G -> ope G V H -> ope_index (mask_comp U V) i = ope_index U (ope_index V i).
   Proof.
     intros L U G V H i HU. revert V H i.
     induction HU as [| x L U G HU IH | x L U G HU IH]; intros V H i HV.
@@ -184,7 +170,67 @@ Section OPE.
       + destruct i; simpl; [reflexivity | f_equal; eapply IH; eassumption].
   Qed.
 
-  (** TODO: the sub-mask order [F ≤ O] between leftovers and its reading as
-      an embedding [view L F ↪ view L O]; renaming of terms along [ren] for
-      the two zones. *)
 End OPE.
+
+Section MaskViews.
+  Context {A : Type}.
+
+  Lemma mask_zero_view : forall (L : list A) n,
+    view_from n L (mask_zero (length L)) = [].
+  Proof. induction L; intros; simpl; auto. Qed.
+
+  Lemma mask_le_view_from : forall U V,
+    mask_le U V -> forall (L : list A) n, wf_mask L V ->
+    exists W, ope (view_from n L V) W (view_from n L U).
+  Proof.
+    intros U V H. induction H; intros [| a L] n Hlen;
+      unfold wf_mask in Hlen; simpl in Hlen; try discriminate.
+    - exists []. constructor.
+    - destruct (IHmask_le L (S n)) as [W HW]; [unfold wf_mask; lia | ].
+      destruct b; simpl; [exists (false :: W); constructor | exists W]; auto.
+    - destruct (IHmask_le L (S n)) as [W HW]; [unfold wf_mask; lia | ].
+      exists (true :: W). simpl. constructor. exact HW.
+  Qed.
+
+  Lemma mask_le_view : forall (L : list A) U V,
+    mask_le U V -> wf_mask L V -> exists W, ope (view L V) W (view L U).
+  Proof. intros. eapply mask_le_view_from; eassumption. Qed.
+End MaskViews.
+
+(** Transport of usage masks through an embedding of the full scope. *)
+Lemma ope_mask_zero : forall {A : Type} (L : list A) E K,
+  ope L E K -> mask_comp E (mask_zero (length K)) = mask_zero (length L).
+Proof. intros A L E K H. induction H; unfold mask_zero in *; simpl; congruence. Qed.
+
+Lemma ope_mask_single : forall {A : Type} (L : list A) E K i a,
+  ope L E K -> In_opt a (nth_error K i) ->
+  mask_comp E (mask_single (length K) i) = mask_single (length L) (ope_index E i).
+Proof.
+  intros A L E K i a H. revert i.
+  induction H; intros [| i] Hi; simpl in *; try contradiction; f_equal; eauto.
+  apply ope_mask_zero, H.
+Qed.
+
+Lemma ope_splitM : forall {A : Type} (L : list A) E K,
+  ope L E K -> forall I U F, SplitM I U F -> wf_mask K I ->
+  SplitM (mask_comp E I) (mask_comp E U) (mask_comp E F).
+Proof.
+  intros A L E K H. induction H as [| x L E K H IH | x L E K H IH]; intros I U F Hs Hw.
+  - unfold wf_mask in Hw. simpl in Hw. destruct I; try discriminate.
+    inversion Hs; constructor.
+  - simpl. constructor. eapply IH; eassumption.
+  - inversion Hs; subst; unfold wf_mask in Hw; simpl in Hw; try discriminate;
+      simpl; constructor; eapply IH; eauto; unfold wf_mask; lia.
+Qed.
+
+Lemma ope_mask_le : forall {A : Type} (L : list A) E K,
+  ope L E K -> forall U V, mask_le U V -> wf_mask K U ->
+  mask_le (mask_comp E U) (mask_comp E V).
+Proof.
+  intros A L E K H. induction H as [| x L E K H IH | x L E K H IH]; intros U V Hle Hw.
+  - unfold wf_mask in Hw. simpl in Hw. destruct U; try discriminate.
+    inversion Hle; constructor.
+  - simpl. constructor. eapply IH; eassumption.
+  - inversion Hle; subst; unfold wf_mask in Hw; simpl in Hw; try discriminate;
+      simpl; constructor; eapply IH; eauto; unfold wf_mask; lia.
+Qed.

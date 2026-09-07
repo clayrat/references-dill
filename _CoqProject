@@ -1,7 +1,21 @@
 -Q theories DILLref
 
+theories/Prelude.v
 theories/Ty.v
 theories/Syntax.v
+theories/Index.v
+theories/Mask.v
 theories/OPE.v
 theories/Split.v
+theories/Scoping.v
+theories/NamedSyntax.v
+theories/Resolve.v
+theories/Typing.v
+theories/Renaming.v
+theories/Substitution.v
+theories/Graph.v
+theories/NatMap.v
+theories/NatMapMask.v
+theories/Store.v
+theories/StoreTyping.v
 theories/Examples.v
