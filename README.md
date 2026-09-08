@@ -14,16 +14,17 @@ The project builds end to end: types, named source syntax and its resolution
 to the de Bruijn core, scope and typing judgments, context and mask laws,
 typed renaming and substitution,
 type uniqueness, typed store balance and ownership acyclicity, proofs for
-the bundled source and store examples, extraction and an OCaml driver that
-prints the source examples. The checker,
-evaluator, translation and their correctness proofs are not implemented yet.
+the bundled source and store examples, an executable source type checker with
+leftover masks, extraction and an OCaml driver that checks the source catalog.
+The checker is proved sound, complete and stable under framing. The evaluator
+and the translation are not implemented yet.
 
 | Component | Status |
 |---|---|
 | types and core AST with independent resource/shared indices | formalized |
 | natural literals, `Succ`, linear `Iter`; derived addition | syntax and source typing defined; evaluation planned |
 | `Split` with unit, commutativity, associativity, permutation transport and keyed correspondence | formalized |
-| availability masks as OPEs: `select`, positioned `view`, identity, composition, `ope_index`, category laws | formalized |
+| availability masks as OPEs: equality, positional consumption, `select`, positioned `view`, identity, composition, `ope_index`, category laws | formalized |
 | zero/singleton masks, inclusion, intersection, relative remainder and `SplitM` laws | formalized |
 | `Split` as complementary masks; pointwise `SplitM` as `Split` on positioned views | formalized |
 | lexical scope and source typing with the linear/affine flag and availability masks | formalized |
@@ -31,15 +32,16 @@ evaluator, translation and their correctness proofs are not implemented yet.
 | type uniqueness at fixed scopes, allowing different masks and modes | proved |
 | two-zone renaming and substitution preserve scoping; typed substitution in both modes | proved |
 | shared weakening/contraction, resource scope extension and adjacent resource exchange | proved |
-| 37 source examples as core AST | classification in both modes and lexical scoping proved for the entire catalog; execution planned |
-| checker `check` with `check_sound`, `check_complete`, `check_frame` | planned |
+| 37 source examples as core AST | classification, lexical scoping and exact checker results proved for the entire catalog; evaluation planned |
+| type inference `infer` with leftover masks | implemented and extracted with regression checks; soundness, mode-sensitive completeness and framing proved |
+| `check_open` and `check_program` for open terms and closed programs | proved sound and complete: linear mode requires every available resource to be consumed |
 | finite stores, runtime typing, typed resource balance and ownership acyclicity | formalized; primitive root swap preserves acyclicity |
 | cyclic store, ownership chains, strong update and invalid ownership examples | configuration proofs and rejection proofs in Rocq |
 | `step`, `runFuel`, preservation, progress, acyclicity of all steps, `no_leak` | planned |
 | `girard`, `girard_typing`, `girard_simulation` | planned |
 | named source AST, lexical shadowing across zones and name resolution | implemented and extracted; declarative resolution correspondence and scope safety proved; 19 resolution checks |
 | text parser and detailed name diagnostics | not implemented; named inputs use AST constructors |
-| OCaml tool `dillref` with `check`, `run`, `girard` and `--affine` | driver prints examples only |
+| OCaml tool `dillref` with `check`, `run`, `girard` and `--affine` | `check [--affine] NAME` over the bundled catalog via the proved `check_program`; `run` and `girard` planned |
 
 Unfinished results are marked as TODOs, without `Admitted`, axioms, or
 checker stubs that report success.
@@ -65,14 +67,28 @@ The tool commands can be overridden: `make ROCQ=rocq OCAMLC=ocamlc`.
 From DILLref Require Import Ty Syntax Mask OPE Split.
 ```
 
-`make demo` currently prints the bundled example programs in core notation,
-where `x0` is the innermost resource binder and `u0` the innermost shared
-binder, and checks that none of them mentions a store address. Five additional
-checks exercise renaming and substitution under binders and preservation of
-runtime addresses. Three store-update checks and two address-traversal checks
-also run after extraction, together with nineteen name-resolution checks.
+`make demo` prints the bundled example programs in core notation, where `x0`
+is the innermost resource binder and `u0` the innermost shared binder. It runs
+the extracted checker on all 37 programs in both modes and on 19 open or
+malformed edge cases, comparing exact types and leftovers with independently
+specified results. Five additional checks exercise renaming and substitution
+under binders and preservation of runtime addresses. Three store-update checks,
+two address-traversal checks and nineteen name-resolution checks also run after
+extraction.
 Configuration typing and acyclicity are propositions
 proved in Rocq; the driver does not decide them or run an evaluator.
+
+The built tool also accepts subcommands:
+
+```sh
+./_build/dillref list                       # bundled programs in core notation
+./_build/dillref check counter tensor_fst   # closed programs, linear mode
+./_build/dillref check --affine tensor_fst  # affine mode
+```
+
+`check` uses `check_program`: a closed program is accepted only if its type
+checks and, in linear mode, no available resource is left unused. A rejected
+program prints `rejected` and makes the exit code nonzero.
 
 ## Project structure
 
@@ -81,13 +97,14 @@ proved in Rocq; the driver does not decide them or run an evaluator.
 | `theories/Ty.v` | Types and decidable equality |
 | `theories/Syntax.v` | Linear/affine flag, core AST, binding conventions, `loc_free`, values and address occurrences |
 | `theories/Index.v` | Index maps, lifting, scope bounds and preservation of entries in polymorphic lists |
-| `theories/Mask.v` | `mask := list bool`, constructors, counting, composition laws, inclusion, intersection, remainder and `SplitM` laws |
+| `theories/Mask.v` | `mask := list bool`, decidable equality, positional consumption, inclusion, intersection, remainder and `SplitM` laws |
 | `theories/OPE.v` | Masks as order-preserving embeddings: `select`, `view`, `ope_index` and composition laws |
 | `theories/Split.v` | Order-preserving context splitting, permutation transport, keyed correspondence and mask bridges |
 | `theories/Scoping.v` | Lexical scope bounds for the two independent variable zones |
 | `theories/NamedSyntax.v` | Named source AST, binder zones and lexical scope representation |
 | `theories/Resolve.v` | Name lookup and resolution, declarative correspondence, scope safety and absence of addresses |
 | `theories/Typing.v` | Declarative source typing, general affine weakening, generation, invariants and type uniqueness |
+| `theories/Infer.v` | Executable type inference with leftover resource masks, `check_open` and `check_program` |
 | `theories/Renaming.v` | Two-zone renaming, identity/composition, scoping, typed scope extension and shared contraction |
 | `theories/Substitution.v` | Simultaneous substitution, typed environments, substitution theorems and adjacent resource exchange |
 | `theories/Graph.v` | Positive paths, acyclicity, decreasing ranks and edge updates over arbitrary vertex types |
@@ -117,6 +134,15 @@ the resource zone with `Split`; the additive pair `⟨e₁, e₂⟩` and the bra
 of `if` share it. `!e` needs an empty resource zone and evaluates as a thunk
 that is re-run at each use.
 
+Typing is synthesis, not checking: binders are annotated and there is no
+polymorphism or subtyping, so every term has at most one type and `infer`
+computes it in one structural pass, with the leftover mask as its second
+output. The type comparisons it performs are equalities between synthesized
+types. A bidirectional algorithm with a checking mode is only needed once
+binder annotations are dropped (Pierce, *Types and Programming Languages*,
+§9.3 and §10.2; Dunfield and Krishnaswami, *Bidirectional Typing*, ACM
+Computing Surveys 54(5), 2021, §1).
+
 Natural numbers have literals `Nat n`, strict successor `Succ e`, and the
 fully applied iterator `Iter count step seed`. For each accumulator type `A`,
 its argument types are `nat`, `!(A ⊸ A)` and `A`, and its result type is `A`.
@@ -142,8 +168,13 @@ scope of this project.
 `scoped g l e` checks only lexical bounds, so runtime addresses are admitted by
 that judgment. Source typing has no address rule and implies `loc_free e = true`.
 The mask length is also a consequence of typing. `TyWeak` admits larger masks
-at any node in affine mode; promotion's body still uses a zero mask. This is a
-declarative specification: the executable checker with leftovers is separate.
+at any node in affine mode; promotion's body still uses a zero mask.
+`Infer.v` implements the separate executable inference with leftovers; its
+soundness theorem reconstructs a declarative demand and split from every
+successful check. Completeness returns the exact declarative remainder in
+linear mode and a supermask of it in affine mode, while every result remains a
+submask of the input. Framing proves that resources outside the checker's
+actual demand pass through unchanged.
 
 `typing_generation` exposes the last syntax-directed rule through any outer
 affine weakening. `typing_unique` proves that a fixed term in fixed shared and

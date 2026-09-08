@@ -11,6 +11,7 @@ theories/Scoping.v
 theories/NamedSyntax.v
 theories/Resolve.v
 theories/Typing.v
+theories/Infer.v
 theories/Renaming.v
 theories/Substitution.v
 theories/Graph.v

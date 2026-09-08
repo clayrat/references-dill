@@ -18,6 +18,31 @@ Definition mask : Type := list bool.
 Definition wf_mask {A : Type} (L : list A) (U : mask) : Prop :=
   length U = length L.
 
+(** Decidable equality is kept computational so algorithms do not depend on
+    proof-producing list equality after extraction. *)
+Fixpoint mask_eqb (U V : mask) : bool :=
+  match U, V with
+  | [], [] => true
+  | u :: U', v :: V' => Bool.eqb u v && mask_eqb U' V'
+  | _, _ => false
+  end.
+
+Lemma mask_eqb_refl : forall U, mask_eqb U U = true.
+Proof. induction U as [| [] U IH]; simpl; auto. Qed.
+
+Lemma mask_eqb_eq : forall U V, mask_eqb U V = true -> U = V.
+Proof.
+  induction U as [| u U IH]; destruct V as [| v V]; simpl; intros H;
+    try discriminate; auto.
+  apply andb_true_iff in H. destruct H as [Huv Htail].
+  apply Bool.eqb_prop in Huv. subst. f_equal. apply IH, Htail.
+Qed.
+
+Lemma mask_eqb_iff : forall U V, mask_eqb U V = true <-> U = V.
+Proof.
+  split; [apply mask_eqb_eq | intros ->; apply mask_eqb_refl].
+Qed.
+
 (** ** Mask constructors by scope size
 
     These functions depend only on the number of positions. Contexts and
@@ -38,6 +63,48 @@ Fixpoint mask_single (n i : nat) : mask :=
   | S n', 0 => true :: mask_zero n'
   | S n', S i' => false :: mask_single n' i'
   end.
+
+(** Consume one available position while retaining every position in the
+    mask. Failure distinguishes an absent or already unavailable position. *)
+Fixpoint mask_consume (i : nat) (U : mask) : option mask :=
+  match i, U with
+  | 0, true :: U' => Some (false :: U')
+  | S i', b :: U' =>
+      match mask_consume i' U' with
+      | Some V => Some (b :: V)
+      | None => None
+      end
+  | _, _ => None
+  end.
+
+Lemma mask_consume_available : forall I i O,
+  In_opt O (mask_consume i I) -> In_opt true (nth_error I i).
+Proof.
+  induction I as [| b I IH]; intros [| i] O H; apply In_opt_Some in H;
+    simpl in H; try discriminate.
+  - destruct b; simpl in H; try discriminate. inversion H. reflexivity.
+  - destruct (mask_consume i I) eqn:E; try discriminate.
+    inversion H; subst. simpl. eapply IH, Some_In_opt, E.
+Qed.
+
+Lemma mask_consume_complete : forall I i,
+  In_opt true (nth_error I i) -> exists O, In_opt O (mask_consume i I).
+Proof.
+  induction I as [| b I IH]; intros [| i] H; simpl in H; try contradiction.
+  - destruct b; simpl in H.
+    + eexists. reflexivity.
+    + discriminate.
+  - destruct (IH i H) as [O E]. simpl. rewrite (In_opt_Some E).
+    eexists. reflexivity.
+Qed.
+
+Lemma mask_consume_iff : forall I i,
+  (exists O, In_opt O (mask_consume i I)) <-> In_opt true (nth_error I i).
+Proof.
+  split.
+  - intros [O H]. eapply mask_consume_available, H.
+  - apply mask_consume_complete.
+Qed.
 
 (** [mask_comp U V] first restricts by [U], then by [V] inside the kept
     positions. The [true]-with-empty-[V] branch is unreachable for
@@ -104,6 +171,15 @@ Fixpoint mask_meet (U V : mask) : mask :=
   | _, _ => []
   end.
 
+(** Union is used in proofs to describe positions consumed by at least one
+    additive alternative. The checker computes the dual operation
+    [mask_meet] on leftovers. *)
+Fixpoint mask_join (U V : mask) : mask :=
+  match U, V with
+  | u :: U', v :: V' => (u || v) :: mask_join U' V'
+  | _, _ => []
+  end.
+
 Lemma mask_le_length : forall U V, mask_le U V -> length U = length V.
 Proof. intros U V H. induction H; simpl; congruence. Qed.
 
@@ -130,6 +206,10 @@ Proof.
   intros U V i H. revert i. induction H; intros [| i] Hi;
     simpl in *; try discriminate; try contradiction; auto.
 Qed.
+
+Lemma mask_le_tail : forall u v U V,
+  mask_le (u :: U) (v :: V) -> mask_le U V.
+Proof. intros u v U V H. inversion H; subst; assumption. Qed.
 
 Lemma mask_meet_length : forall U V,
   length U = length V -> length (mask_meet U V) = length U.
@@ -170,6 +250,30 @@ Proof.
   intros W U V H. revert V. induction H; intros R HV;
     inversion HV; subst; simpl; constructor; auto.
 Qed.
+
+Lemma mask_join_length : forall U V,
+  length U = length V -> length (mask_join U V) = length U.
+Proof.
+  induction U; destruct V; simpl; intros H; try discriminate;
+    f_equal; auto.
+Qed.
+
+Lemma mask_join_comm : forall U V, mask_join U V = mask_join V U.
+Proof.
+  induction U; destruct V; simpl; auto. rewrite orb_comm, IHU. reflexivity.
+Qed.
+
+Lemma mask_le_join_l : forall U V,
+  length U = length V -> mask_le U (mask_join U V).
+Proof.
+  induction U as [| u U IH]; destruct V as [| v V]; simpl; intros H;
+    try discriminate; try constructor.
+  destruct u, v; simpl; constructor; apply IH; lia.
+Qed.
+
+Lemma mask_le_join_r : forall U V,
+  length U = length V -> mask_le V (mask_join U V).
+Proof. intros. rewrite mask_join_comm. apply mask_le_join_l. lia. Qed.
 
 Lemma mask_zero_length : forall n, length (mask_zero n) = n.
 Proof. intros. apply repeat_length. Qed.
@@ -275,11 +379,68 @@ Lemma splitM_right_unique : forall I U F F',
   SplitM I U F -> SplitM I U F' -> F = F'.
 Proof. intros. rewrite (splitM_remainder _ _ _ H), (splitM_remainder _ _ _ H0). reflexivity. Qed.
 
+Lemma splitM_left_unique : forall I U U' F,
+  SplitM I U F -> SplitM I U' F -> U = U'.
+Proof.
+  intros. apply splitM_comm in H, H0.
+  eapply splitM_right_unique; eassumption.
+Qed.
+
 Lemma splitM_left : forall I, SplitM I I (mask_zero (length I)).
 Proof. induction I as [| [] I IH]; simpl; constructor; assumption. Qed.
 
 Lemma splitM_right : forall I, SplitM I (mask_zero (length I)) I.
 Proof. intros. apply splitM_comm, splitM_left. Qed.
+
+Lemma splitM_zero_left_inv : forall I F n,
+  SplitM I (mask_zero n) F -> I = F.
+Proof.
+  induction I as [| b I IH]; intros F [| n] H; inversion H; subst; simpl in *;
+    f_equal; eauto.
+Qed.
+
+(** Successful consumption is the executable complement of the singleton
+    demand at the selected position. *)
+Lemma mask_consume_split : forall I i O,
+  In_opt O (mask_consume i I) ->
+  SplitM I (mask_single (length I) i) O.
+Proof.
+  induction I as [| b I IH]; intros [| i] O H; apply In_opt_Some in H;
+    simpl in H; try discriminate.
+  - destruct b; try discriminate. inversion H; subst. simpl.
+    apply SplitMLeft, splitM_right.
+  - destruct (mask_consume i I) eqn:E; try discriminate.
+    inversion H; subst. simpl. destruct b.
+    + apply SplitMRight. eapply IH, Some_In_opt, E.
+    + apply SplitMOff. eapply IH, Some_In_opt, E.
+Qed.
+
+Lemma mask_consume_le : forall I i O,
+  In_opt O (mask_consume i I) -> mask_le O I.
+Proof. intros. eapply splitM_le_r, mask_consume_split, H. Qed.
+
+Lemma mask_consume_length : forall I i O,
+  In_opt O (mask_consume i I) -> length O = length I.
+Proof.
+  intros I i O H. apply mask_consume_split in H.
+  destruct (splitM_length _ _ _ H). assumption.
+Qed.
+
+Lemma mask_consume_of_split : forall I i O,
+  In_opt true (nth_error I i) ->
+  SplitM I (mask_single (length I) i) O ->
+  In_opt O (mask_consume i I).
+Proof.
+  intros I i O Havailable Hsplit.
+  destruct (mask_consume_complete _ _ Havailable) as [F Hconsume].
+  pose proof (mask_consume_split _ _ _ Hconsume) as Hcomputed.
+  pose proof (splitM_right_unique _ _ _ _ Hcomputed Hsplit) as ->.
+  exact Hconsume.
+Qed.
+
+Lemma splitM_tail : forall i u f I U F,
+  SplitM (i :: I) (u :: U) (f :: F) -> SplitM I U F.
+Proof. intros i u f I U F H. inversion H; subst; assumption. Qed.
 
 Lemma splitM_zero : forall n,
   SplitM (mask_zero n) (mask_zero n) (mask_zero n).
@@ -337,4 +498,110 @@ Lemma splitM_zero_right_inv : forall I U n,
 Proof.
   induction I as [| b I IH]; intros U [| n] H; inversion H; subst; simpl in *;
     f_equal; eauto.
+Qed.
+
+(** Additive alternatives consume the union of their demands and leave the
+    intersection of their remainders. *)
+Lemma splitM_join_remainders : forall I U1 F1 U2 F2,
+  SplitM I U1 F1 -> SplitM I U2 F2 ->
+  SplitM I (mask_join U1 U2) (mask_meet F1 F2).
+Proof.
+  intros I U1 F1 U2 F2 H1. revert U2 F2.
+  induction H1; intros U2 F2 H2; inversion H2; subst; simpl;
+    constructor; eauto.
+Qed.
+
+(** Adding available positions to the whole mask preserves an existing
+    demand and passes the added positions to the remainder. *)
+Lemma splitM_extend : forall I U F,
+  SplitM I U F -> forall J, mask_le I J ->
+  exists P, SplitM J U P /\ mask_le F P.
+Proof.
+  intros I U F Hsplit J Hle. revert U F Hsplit.
+  induction Hle; intros demand remainder Hsplit; inversion Hsplit; subst.
+  - exists []. split; constructor.
+  - match goal with
+    | IH : forall U F, SplitM _ U F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [P [Hs Hp]]
+    end.
+    destruct b; eexists; split; constructor; eassumption.
+  - match goal with
+    | IH : forall U F, SplitM _ U F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [P [Hs Hp]]
+    end;
+    eexists; split; constructor; eassumption.
+  - match goal with
+    | IH : forall U F, SplitM _ U F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [P [Hs Hp]]
+    end.
+    exists (true :: P). split; constructor; assumption.
+Qed.
+
+(** Reducing a demand returns the removed positions to the remainder. *)
+Lemma splitM_shrink_left : forall I U F,
+  SplitM I U F -> forall V, mask_le V U ->
+  exists O, SplitM I V O /\ mask_le F O.
+Proof.
+  intros I U F Hsplit V Hle. revert I F Hsplit.
+  induction Hle; intros whole remainder Hsplit; inversion Hsplit; subst.
+  - exists []. split; constructor.
+  - match goal with
+    | IH : forall I F, SplitM I _ F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [O [Hs Ho]]
+    end.
+    exists (false :: O). split; constructor; assumption.
+  - match goal with
+    | IH : forall I F, SplitM I _ F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [O [Hs Ho]]
+    end.
+    exists (true :: O). split; constructor; assumption.
+  - match goal with
+    | IH : forall I F, SplitM I _ F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [O [Hs Ho]]
+    end.
+    exists (true :: O). split; constructor; assumption.
+  - match goal with
+    | IH : forall I F, SplitM I _ F -> _, Htail : SplitM _ _ _ |- _ =>
+        destruct (IH _ _ Htail) as [O [Hs Ho]]
+    end.
+    exists (false :: O). split; constructor; assumption.
+Qed.
+
+(** Reassociate a sequential demand and transport it to another frame. *)
+Lemma splitM_frame_sequence : forall I C1 O1 C2 O C J P,
+  SplitM I C1 O1 -> SplitM O1 C2 O ->
+  SplitM I C O -> SplitM J C P ->
+  exists P1, SplitM J C1 P1 /\ SplitM P1 C2 P.
+Proof.
+  intros I C1 O1 C2 O C J P H1 H2 Htotal Hframe.
+  destruct (splitM_unassoc _ _ _ _ _ H1 H2) as [C' [Hwhole Hparts]].
+  pose proof (splitM_left_unique _ _ _ _ Hwhole Htotal) as HC. subst C'.
+  eapply splitM_assoc; eassumption.
+Qed.
+
+(** Transport both additive demands through a frame whose demand is their
+    union. The transported remainders still intersect to the framed result. *)
+Lemma splitM_frame_meet : forall I C1 O1 C2 O2 C J P,
+  SplitM I C1 O1 -> SplitM I C2 O2 ->
+  SplitM I C (mask_meet O1 O2) -> SplitM J C P ->
+  exists P1 P2, SplitM J C1 P1 /\ SplitM J C2 P2 /\
+    mask_meet P1 P2 = P.
+Proof.
+  intros I C1 O1 C2 O2 C J P H1 H2 Htotal Hframe.
+  pose proof (splitM_join_remainders _ _ _ _ _ H1 H2) as Hjoin.
+  pose proof (splitM_left_unique _ _ _ _ Hjoin Htotal) as HC. subst C.
+  pose proof (splitM_length _ _ _ H1) as [HC1 _].
+  pose proof (splitM_length _ _ _ H2) as [HC2 _].
+  assert (Hlen : length C1 = length C2) by lia.
+  assert (HC1J : mask_le C1 J).
+  { eapply mask_le_trans; [apply mask_le_join_l; exact Hlen | ].
+    eapply splitM_le_l, Hframe. }
+  assert (HC2J : mask_le C2 J).
+  { eapply mask_le_trans; [apply mask_le_join_r; exact Hlen | ].
+    eapply splitM_le_l, Hframe. }
+  pose proof (splitM_diff _ _ HC1J) as HJ1.
+  pose proof (splitM_diff _ _ HC2J) as HJ2.
+  pose proof (splitM_join_remainders _ _ _ _ _ HJ1 HJ2) as HJjoin.
+  exists (mask_diff J C1), (mask_diff J C2). repeat split; try assumption.
+  symmetry. eapply splitM_right_unique; eassumption.
 Qed.

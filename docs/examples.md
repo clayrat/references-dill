@@ -6,10 +6,12 @@ is accepted with the same type in both modes, accepted only affinely, or rejecte
 at every type in both modes. `source_examples_scoped` also proves that every
 entry is closed and lexically well-scoped, including the negative cases.
 
-The tables and traces below are a manual account of the intended semantics.
-Execution and final stores have not yet been checked by a formal evaluator.
-The OCaml driver currently checks absence of addresses in source terms and runs
-separate binding-operation examples; it does not run a type checker.
+The typing table is represented independently as `source_infer_expectations`.
+Rocq proves exact equality with the results computed by `infer` and relates
+those results to the declarative classifications. The extracted OCaml driver
+runs the same 37 programs in both modes and compares their types and leftovers.
+Execution traces and final stores remain a manual account until the evaluator
+is formalized.
 
 ## Typing coverage
 
@@ -60,6 +62,12 @@ All iterator rejection lemmas for mismatched step, mismatched seed and duplicate
 accumulator quantify over the count, including zero. The external-capture example
 itself uses count zero. Bodies are checked even when evaluation would not force
 the step thunk.
+
+The closed catalog always has an empty leftover mask. Nineteen additional
+checker cases cover nonempty leftovers, stable resource indices, affine branch
+intersection, local binder exit, promotion, unavailable variables, malformed
+mask lengths, out-of-scope indices and rejection of runtime locations. Their
+expected results are proved by computation and checked again after extraction.
 
 ## Resource accounting in the derivations
 
@@ -167,5 +175,6 @@ an ownership chain, lazy sharing, strong update, sparse address keys, dangling
 addresses, aliases, self-swap, promotion capture and the mode-dependent orphan
 cell. [Store invariant](store-invariant.md) gives their interpretation and the
 scope of the swap proof. The Girard example still belongs to the translation
-work. Formal execution traces and checker agreement remain separate obligations
-for the algorithms.
+work. Formal execution traces remain an obligation for the evaluator. The
+exhaustive bundled regression checks supplement the general checker soundness,
+completeness and framing theorems; they are not used in place of those proofs.

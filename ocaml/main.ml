@@ -4,8 +4,15 @@
    functions answer. Every reported fact is also checked in theories/, so the
    two agree by construction.
 
-   TODO: subcommands [check], [run] and [girard] with the [--affine] flag,
-   once the corresponding functions are extracted. *)
+   Without arguments the driver runs the bundled regression checks. The
+   [check] subcommand accepts or rejects bundled closed programs with the
+   extracted [check_program] and prints the synthesized type. No expected
+   type is given on the command line: binders are annotated, so the type of
+   a program is determined by the program alone (see Infer.v). [list] prints
+   the catalog.
+
+   TODO: [run] and [girard] once their corresponding functions are
+   extracted; a text parser so that [check] accepts programs from files. *)
 
 open Dillref
 
@@ -69,7 +76,18 @@ and pp_atom = function
       pp t
   | t -> "(" ^ pp t ^ ")"
 
-let () =
+let pp_mask bits =
+  "[" ^ String.concat "; " (List.map string_of_bool bits) ^ "]"
+
+let pp_infer_result = function
+  | None -> "rejected"
+  | Some (a, leftovers) -> pp_ty a ^ " with " ^ pp_mask leftovers
+
+let flag_name = function
+  | Linear -> "linear"
+  | Affine -> "affine"
+
+let regression () =
   let failures = ref 0 in
   List.iter
     (fun (name, e) ->
@@ -80,6 +98,40 @@ let () =
         incr failures
       end)
     source_examples;
+  if List.length source_examples <> List.length source_infer_expectations then begin
+    Printf.eprintf "source inference table has %d entries for %d programs\n"
+      (List.length source_infer_expectations) (List.length source_examples);
+    incr failures
+  end else
+    List.iter2
+      (fun (name, e) (expected_name, (expected_linear, expected_affine)) ->
+        if name <> expected_name then begin
+          Printf.eprintf "source inference table has %s where %s was expected\n"
+            expected_name name;
+          incr failures
+        end;
+        List.iter
+          (fun (mode, expected) ->
+            let actual = infer mode [] [] [] e in
+            if actual <> expected then begin
+              Printf.eprintf "%s (%s): got %s, expected %s\n"
+                name (flag_name mode) (pp_infer_result actual)
+                (pp_infer_result expected);
+              incr failures
+            end)
+          [ (Linear, expected_linear); (Affine, expected_affine) ])
+      source_examples source_infer_expectations;
+  List.iter
+    (fun case ->
+      let name = infer_case_name case in
+      let actual = run_infer_case case in
+      let expected = expected_infer_case case in
+      if actual <> expected then begin
+        Printf.eprintf "%s: got %s, expected %s\n"
+          name (pp_infer_result actual) (pp_infer_result expected);
+        incr failures
+      end)
+    infer_edge_cases;
   List.iter
     (fun (name, (actual, expected)) ->
       if actual <> expected then begin
@@ -120,8 +172,48 @@ let () =
     incr failures
   end;
   Printf.printf "Source examples: %d checked\n" (List.length source_examples);
+  Printf.printf "Source type checks: %d checked in both modes\n"
+    (List.length source_examples);
+  Printf.printf "Checker edge cases: %d checked\n"
+    (List.length infer_edge_cases);
   Printf.printf "Binding examples: %d checked\n" (List.length binding_examples);
   Printf.printf "Name resolution: %d checked\n" (List.length resolution_examples);
   Printf.printf "Store updates: %d checked\n" (List.length store_examples);
   Printf.printf "Address traversals: %d checked\n" (List.length location_examples);
   if !failures > 0 then exit 1
+
+let usage () =
+  prerr_endline "usage: dillref                          run the bundled regression checks";
+  prerr_endline "       dillref list                     list the bundled programs";
+  prerr_endline "       dillref check [--affine] NAME... type-check bundled programs";
+  exit 2
+
+(* A rejected program is reported on stdout and makes the exit code nonzero,
+   like a compiler; an unknown name is an error. *)
+let check_command args =
+  let mode = if List.mem "--affine" args then Affine else Linear in
+  let names = List.filter (fun a -> a <> "--affine") args in
+  if names = [] then usage ();
+  let failures = ref 0 in
+  List.iter
+    (fun name ->
+      match List.assoc_opt name source_examples with
+      | None ->
+          Printf.eprintf "%s: unknown program\n" name;
+          incr failures
+      | Some e ->
+          Printf.printf "%s (%s): " name (flag_name mode);
+          (match check_program mode e with
+           | Some a -> print_endline (pp_ty a)
+           | None -> print_endline "rejected"; incr failures))
+    names;
+  if !failures > 0 then exit 1
+
+let () =
+  match Array.to_list Sys.argv with
+  | [] | [_] -> regression ()
+  | _ :: "list" :: _ ->
+      List.iter (fun (name, e) -> Printf.printf "%-20s %s\n" name (pp e))
+        source_examples
+  | _ :: "check" :: args -> check_command args
+  | _ -> usage ()

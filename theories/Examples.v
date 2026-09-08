@@ -5,7 +5,8 @@
     in both modes. Their evaluation has not yet been formalized. *)
 
 From Stdlib Require Import List String Permutation Lia.
-From DILLref Require Import Prelude Ty Syntax Index Scoping Mask Split Typing Renaming Substitution.
+From DILLref Require Import Prelude Ty Syntax Index Scoping Mask Split Typing Infer.
+From DILLref Require Import Renaming Substitution.
 From DILLref Require Import NamedSyntax Resolve.
 From DILLref Require Import Graph NatMap Store StoreTyping.
 Import ListNotations.
@@ -232,6 +233,171 @@ Example iter_zero_does_not_hide_location :
 Proof. reflexivity. Qed.
 End SourceExamples.
 
+(** ** Executable inference examples
+
+    The expected results below are data independent of [infer]. Their exact
+    equality with the computed results is proved in Rocq and checked again by
+    the extracted OCaml driver. The source catalog is closed, so separate edge
+    cases exercise nonempty leftovers and malformed inputs. *)
+Section InferExamples.
+
+Definition infer_result : Type := option (ty * mask).
+Definition mode_infer_results : Type := infer_result * infer_result.
+
+Definition inferred_both (a : ty) : mode_infer_results :=
+  (Some (a, []), Some (a, [])).
+
+Definition inferred_affine (a : ty) : mode_infer_results :=
+  (None, Some (a, [])).
+
+Definition rejected_both : mode_infer_results := (None, None).
+
+Definition source_infer_expectations : list (string * mode_infer_results) :=
+  [ ("linear_id", inferred_both (TLolli TNat TNat));
+    ("add", inferred_both (TLolli TNat (TLolli TNat TNat)));
+    ("add_two_three", inferred_both TNat);
+    ("iter_zero", inferred_both TNat);
+    ("iter_ref", inferred_both TNat);
+    ("iter_unboxed_step", rejected_both);
+    ("iter_captures_ref", rejected_both);
+    ("iter_drops_acc", inferred_affine TNat);
+    ("curry", inferred_both
+      (TLolli (TLolli (TTensor TNat TBool) TUnit)
+        (TLolli TNat (TLolli TBool TUnit))));
+    ("uncurry", inferred_both
+      (TLolli (TLolli TNat (TLolli TBool TUnit))
+        (TLolli (TTensor TNat TBool) TUnit)));
+    ("sym_ten", inferred_both
+      (TLolli (TTensor TNat TBool) (TTensor TBool TNat)));
+    ("with_fst", inferred_both (TLolli (TWith TNat TBool) TNat));
+    ("tensor_fst", inferred_affine (TLolli (TTensor TNat TBool) TNat));
+    ("counter", inferred_both TNat);
+    ("bang_new_twice", inferred_both (TTensor (TRef TNat) (TRef TNat)));
+    ("bang_captures_ref", rejected_both);
+    ("affine_leak", inferred_affine TNat);
+    ("derelict", inferred_both (TLolli (TBang TNat) TNat));
+    ("dig", inferred_both (TLolli (TBang TNat) (TBang (TBang TNat))));
+    ("dup", inferred_both
+      (TLolli (TBang TNat) (TTensor (TBang TNat) (TBang TNat))));
+    ("del", inferred_both (TLolli (TBang TNat) TUnit));
+    ("iter_bad_step", rejected_both);
+    ("iter_bad_seed", rejected_both);
+    ("iter_duplicates_acc", rejected_both);
+    ("free_both_branches", inferred_both (TLolli (TRef TUnit) TUnit));
+    ("free_one_branch", inferred_affine (TLolli (TRef TUnit) TUnit));
+    ("free_one_component", inferred_affine
+      (TLolli (TRef TUnit) (TWith TUnit TUnit)));
+    ("free_after_branch", rejected_both);
+    ("free_nonunit", rejected_both);
+    ("double_free", rejected_both);
+    ("alias_double_free", rejected_both);
+    ("closure_ref", inferred_both TUnit);
+    ("nested_ref", inferred_both TUnit);
+    ("lazy_shared_ref", inferred_both TUnit);
+    ("add_effects", inferred_both TNat);
+    ("sequential_two_refs", inferred_both
+      (TLolli (TRef TUnit) (TLolli (TRef TUnit) TUnit)));
+    ("shadowed_resource", inferred_affine
+      (TLolli TNat (TLolli TNat TNat))) ].
+
+Definition source_infer_results : list (string * mode_infer_results) :=
+  map (fun p =>
+    (fst p,
+      (infer Linear [] [] [] (snd p),
+       infer Affine [] [] [] (snd p)))) source_examples.
+
+Example source_infer_results_expected :
+  source_infer_results = source_infer_expectations.
+Proof. reflexivity. Qed.
+
+Inductive infer_case : Type :=
+  | InferCase :
+      string -> flag -> list ty -> list ty -> mask -> term -> infer_result ->
+      infer_case.
+
+Definition infer_case_name (c : infer_case) : string :=
+  match c with InferCase name _ _ _ _ _ _ => name end.
+
+Definition run_infer_case (c : infer_case) : infer_result :=
+  match c with
+  | InferCase _ f shared resources input e _ =>
+      infer f shared resources input e
+  end.
+
+Definition expected_infer_case (c : infer_case) : infer_result :=
+  match c with InferCase _ _ _ _ _ _ expected => expected end.
+
+Definition infer_result_eqb (r1 r2 : infer_result) : bool :=
+  match r1, r2 with
+  | None, None => true
+  | Some (a, O1), Some (b, O2) => ty_eqb a b && mask_eqb O1 O2
+  | _, _ => false
+  end.
+
+Definition infer_case_passes (c : infer_case) : bool :=
+  infer_result_eqb (run_infer_case c) (expected_infer_case c).
+
+Definition infer_edge_cases : list infer_case :=
+  [ InferCase "consume_first" Linear [] [TNat; TBool] [true; true]
+      (LVar 0) (Some (TNat, [false; true]));
+    InferCase "stable_second_index" Linear [] [TNat; TBool] [true; true]
+      (Pair (LVar 0) (LVar 1))
+      (Some (TTensor TNat TBool, [false; false]));
+    InferCase "frame_without_second" Linear [] [TNat; TBool] [true; false]
+      (LVar 0) (Some (TNat, [false; false]));
+    InferCase "unavailable_resource" Linear [] [TNat] [false]
+      (LVar 0) None;
+    InferCase "branch_mismatch_linear" Linear [] [TRef TUnit] [true]
+      (If (Bool false) (Free (LVar 0)) Unit) None;
+    InferCase "branch_meet_affine" Affine [] [TRef TUnit] [true]
+      (If (Bool false) (Free (LVar 0)) Unit) (Some (TUnit, [false]));
+    InferCase "branch_then_reuse" Affine [] [TRef TUnit] [true]
+      (LetUnit (If (Bool false) (Free (LVar 0)) Unit) (Free (LVar 0))) None;
+    InferCase "with_meet_affine" Affine [] [TRef TUnit] [true]
+      (With (Free (LVar 0)) Unit) (Some (TWith TUnit TUnit, [false]));
+    InferCase "local_drop_linear" Linear [] [] []
+      (Lam TUnit Unit) None;
+    InferCase "local_drop_affine" Affine [] [] []
+      (Lam TUnit Unit) (Some (TLolli TUnit TUnit, []));
+    InferCase "pair_local_drop_linear" Linear [] [] []
+      (LetPair (Pair Unit Unit) (LVar 1)) None;
+    InferCase "pair_local_drop_affine" Affine [] [] []
+      (LetPair (Pair Unit Unit) (LVar 1)) (Some (TUnit, []));
+    InferCase "promotion_preserves_frame" Linear [] [TRef TUnit] [true]
+      (Bang (Nat 0)) (Some (TBang TNat, [true]));
+    InferCase "promotion_capture_affine" Affine [] [TRef TUnit] [true]
+      (Bang (LVar 0)) None;
+    InferCase "short_input_mask" Linear [] [TNat] []
+      (LVar 0) None;
+    InferCase "long_input_mask" Linear [] [] [true]
+      Unit None;
+    InferCase "resource_index_out_of_scope" Linear [] [TNat] [true]
+      (LVar 1) None;
+    InferCase "shared_index_out_of_scope" Linear [] [] []
+      (UVar 0) None;
+    InferCase "runtime_location" Linear [] [] []
+      (Loc 0) None ].
+
+Example infer_edge_cases_expected :
+  forallb infer_case_passes infer_edge_cases = true.
+Proof. reflexivity. Qed.
+
+(** The checker result also records the type established or rejected by the
+    independent declarative proofs below, not only the expected mode. *)
+Definition infer_matches_classification (e : term) : Prop :=
+  match infer Linear [] [] [] e, infer Affine [] [] [] e with
+  | Some (a, out_linear), Some (b, out_affine) =>
+      out_linear = [] /\ out_affine = [] /\
+      has_type Linear [] [] [] e a /\ has_type Affine [] [] [] e b
+  | None, Some (b, out_affine) =>
+      out_affine = [] /\ (forall a, ~ has_type Linear [] [] [] e a) /\
+      has_type Affine [] [] [] e b
+  | None, None => forall f a, ~ has_type f [] [] [] e a
+  | Some _, None => False
+  end.
+
+End InferExamples.
+
 (** ** Checks against declarative typing *)
 Section TypingChecks.
 
@@ -361,8 +527,8 @@ Example promotion_capture_rejected : forall f,
   ~ has_type f [] [TRef TNat] [true] (Bang (LVar 0)) (TBang (TRef TNat)).
 Proof. intros. apply typing_bang_lvar_absurd. Qed.
 
-(** TODO: compare checker results and evaluation traces with the proved
-    classifications and expected stores once those algorithms are available. *)
+(** TODO: compare evaluation traces with the expected stores once the
+    operational semantics is available. *)
 End TypingChecks.
 
 (** ** Context permutations
@@ -785,6 +951,40 @@ Proof.
       solve [right; right; intros; eauto with example_classification]] | ]).
   constructor.
 Qed.
+
+Lemma source_examples_infer_classified :
+  Forall (fun p => infer_matches_classification (snd p)) source_examples.
+Proof.
+  unfold source_examples.
+  repeat (apply Forall_cons; [
+    cbn [snd infer_matches_classification infer infer_raw merge_leftovers
+      finish_binder mask_eqb mask_consume mask_meet ty_eqb
+      iter_unboxed_step iter_captures_ref bang_captures_ref
+      iter_mismatched_step iter_mismatched_seed iter_duplicates_accumulator
+      free_after_branch free_nonunit double_free alias_double_free successor];
+    repeat split; try intros; eauto with example_classification | ]).
+  all: try constructor.
+  - change (forall f a, ~ has_type f [] [] [] iter_unboxed_step a).
+    apply iter_unboxed_step_rejected.
+  - change (forall f a, ~ has_type f [] [] [] iter_captures_ref a).
+    apply iter_captures_ref_rejected.
+  - change (forall f a, ~ has_type f [] [] [] bang_captures_ref a).
+    apply bang_captures_ref_rejected.
+  - change (forall f a, ~ has_type f [] [] [] (iter_mismatched_step 0) a).
+    intros f a. apply (iter_mismatched_step_rejected f 0 a).
+  - change (forall f a, ~ has_type f [] [] [] (iter_mismatched_seed 0) a).
+    intros f a. apply (iter_mismatched_seed_rejected f 0 a).
+  - change (forall f a, ~ has_type f [] [] [] (iter_duplicates_accumulator 0) a).
+    intros f a. apply (iter_duplicates_accumulator_rejected f 0 a).
+  - change (forall f a, ~ has_type f [] [] [] free_after_branch a).
+    apply free_after_branch_rejected.
+  - change (forall f a, ~ has_type f [] [] [] free_nonunit a).
+    apply free_nonunit_rejected.
+  - change (forall f a, ~ has_type f [] [] [] double_free a).
+    apply double_free_rejected.
+  - change (forall f a, ~ has_type f [] [] [] alias_double_free a).
+    apply alias_double_free_rejected.
+Qed.
 End Classification.
 
 (** ** Runtime store examples
@@ -1121,30 +1321,22 @@ Proof. repeat constructor. Qed.
 
 (** Typing is checked on the core produced by resolution. *)
 Example named_id_typed : forall f,
-  exists t, In_opt t (resolve [] named_id) /\ has_type f [] [] [] t (TLolli TNat TNat).
-Proof.
-  intros f. exists (linear_id TNat). split; [reflexivity | apply linear_id_typed].
-Qed.
+  Exists_opt (fun t => has_type f [] [] [] t (TLolli TNat TNat)) (resolve [] named_id).
+Proof. intros f. exact (linear_id_typed f [] [] TNat). Qed.
 
 Example named_add_typed : forall f,
-  exists t, In_opt t (resolve [] named_add) /\
-    has_type f [] [] [] t (TLolli TNat (TLolli TNat TNat)).
-Proof.
-  intros f. exists add. split; [reflexivity | apply add_typed].
-Qed.
+  Exists_opt (fun t => has_type f [] [] [] t (TLolli TNat (TLolli TNat TNat)))
+    (resolve [] named_add).
+Proof. intros f. exact (add_typed f). Qed.
 
 Example named_counter_typed : forall f,
-  exists t, In_opt t (resolve [] named_counter) /\ has_type f [] [] [] t TNat.
-Proof.
-  intros f. exists counter. split; [reflexivity | apply counter_typed].
-Qed.
+  Exists_opt (fun t => has_type f [] [] [] t TNat) (resolve [] named_counter).
+Proof. intros f. exact (counter_typed f). Qed.
 
 Example named_shadow_affine :
-  exists t, In_opt t (resolve [] named_shadow) /\
-    has_type Affine [] [] [] t (TLolli TNat (TLolli TNat TNat)).
-Proof.
-  exists shadowed_resource. split; [reflexivity | apply shadowed_resource_affine].
-Qed.
+  Exists_opt (fun t => has_type Affine [] [] [] t (TLolli TNat (TLolli TNat TNat)))
+    (resolve [] named_shadow).
+Proof. exact shadowed_resource_affine. Qed.
 
 Example named_shadow_linear_rejected : forall t a,
   In_opt t (resolve [] named_shadow) -> ~ has_type Linear [] [] [] t a.

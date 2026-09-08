@@ -9,18 +9,21 @@
     range control. Addresses are natural numbers compared for equality. *)
 
 From Stdlib Require Import Extraction ExtrOcamlBasic ExtrOcamlNativeString.
-From DILLref Require Import Ty Syntax Mask OPE Renaming Substitution NatMap Store Examples.
+From DILLref Require Import Ty Syntax Mask OPE Infer.
+From DILLref Require Import Renaming Substitution NatMap Store Examples.
 From DILLref Require Import NamedSyntax Resolve.
 
 Extraction Language OCaml.
 Set Extraction Output Directory "ocaml/generated".
 
 Extraction "dillref.ml"
-  ty_eqb loc_free select view mask_id mask_comp ope_index mask_compl
-  mask_zero mask_single mask_meet mask_diff
+  ty_eqb mask_eqb loc_free select view mask_id mask_comp ope_index mask_compl
+  mask_zero mask_single mask_consume mask_meet mask_diff infer check_open check_program
   rename subst subst_l subst_u locations natmap_domain natmap_lookup natmap_replace
   find_name resolve
-  source_examples binding_examples store_examples location_examples resolution_examples.
+  source_examples source_infer_expectations
+  infer_case_name run_infer_case expected_infer_case infer_edge_cases
+  binding_examples store_examples location_examples resolution_examples.
 
-(** TODO: extract [check], [step], [runFuel] and [girard] together with
-    the example programs once they are defined. *)
+(** TODO: extract [step], [runFuel] and [girard] together with their examples
+    once they are defined. *)
