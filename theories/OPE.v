@@ -202,12 +202,13 @@ Lemma ope_mask_zero : forall {A : Type} (L : list A) E K,
   ope L E K -> mask_comp E (mask_zero (length K)) = mask_zero (length L).
 Proof. intros A L E K H. induction H; unfold mask_zero in *; simpl; congruence. Qed.
 
-Lemma ope_mask_single : forall {A : Type} (L : list A) E K i a,
-  ope L E K -> In_opt a (nth_error K i) ->
+Lemma ope_mask_single : forall {A : Type} (L : list A) E K i,
+  ope L E K -> Is_some (nth_error K i) ->
   mask_comp E (mask_single (length K) i) = mask_single (length L) (ope_index E i).
 Proof.
-  intros A L E K i a H. revert i.
-  induction H; intros [| i] Hi; simpl in *; try contradiction; f_equal; eauto.
+  intros A L E K i H Hsome. apply Is_some_exists in Hsome.
+  destruct Hsome as [a Hi]. revert i a Hi.
+  induction H; intros [| i] a Hi; simpl in *; try contradiction; f_equal; eauto.
   apply ope_mask_zero, H.
 Qed.
 

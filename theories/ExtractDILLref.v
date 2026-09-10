@@ -10,7 +10,7 @@
 
 From Stdlib Require Import Extraction ExtrOcamlBasic ExtrOcamlNativeString.
 From DILLref Require Import Ty Syntax Mask OPE Infer.
-From DILLref Require Import Renaming Substitution NatMap Store Examples.
+From DILLref Require Import Renaming Substitution NatMap Store Semantics Examples.
 From DILLref Require Import NamedSyntax Resolve.
 
 Extraction Language OCaml.
@@ -19,11 +19,19 @@ Set Extraction Output Directory "ocaml/generated".
 Extraction "dillref.ml"
   ty_eqb mask_eqb loc_free select view mask_id mask_comp ope_index mask_compl
   mask_zero mask_single mask_consume mask_meet mask_diff infer check_open check_program
-  rename subst subst_l subst_u locations natmap_domain natmap_lookup natmap_replace
+  rename subst subst_l subst_u locations
+  natmap_domain natmap_lookup natmap_insert natmap_remove natmap_max_key natmap_fresh
+  natmap_replace fresh store_insert store_update store_remove
+  store_sig_insert store_sig_update store_sig_remove
+  step step_event runFuel runFuelTrace run_result_config
+  trace_result_events trace_result_config trace_result_run
   find_name resolve
   source_examples source_infer_expectations
   infer_case_name run_infer_case expected_infer_case infer_edge_cases
-  binding_examples store_examples location_examples resolution_examples.
+  binding_examples store_examples location_examples resolution_examples
+  evaluation_case_name run_evaluation_case expected_evaluation_case
+  evaluation_examples
+  event_trace_case_name run_event_trace_case expected_event_trace_case
+  event_trace_examples.
 
-(** TODO: extract [step], [runFuel] and [girard] together with their examples
-    once they are defined. *)
+(** TODO: extract [girard] with its examples once it is defined. *)

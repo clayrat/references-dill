@@ -32,11 +32,11 @@ Proof.
   specialize (H i). lia.
 Qed.
 
-Lemma lookup_bound : forall {A : Type} (L : list A) i a,
-  In_opt a (nth_error L i) -> i < length L.
+Lemma lookup_bound : forall {A : Type} (L : list A) i,
+  Is_some (nth_error L i) -> i < length L.
 Proof.
-  intros A L i a H. apply In_opt_eq_Some in H.
-  apply nth_error_Some. rewrite H. discriminate.
+  intros A L i H. apply nth_error_Some. intros Hnone.
+  unfold Is_some, Exists_opt in H. rewrite Hnone in H. exact H.
 Qed.
 
 Definition ren_context {A : Type} (G G' : list A) (r : nat -> nat) : Prop :=

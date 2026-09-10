@@ -18,6 +18,10 @@ Definition mask : Type := list bool.
 Definition wf_mask {A : Type} (L : list A) (U : mask) : Prop :=
   length U = length L.
 
+Lemma closed_mask_nil : forall {A : Type} (L : list A) U,
+  wf_mask L U -> L = [] -> U = [].
+Proof. unfold wf_mask. intros A L U H ->. destruct U; simpl in H; auto; lia. Qed.
+
 (** Decidable equality is kept computational so algorithms do not depend on
     proof-producing list equality after extraction. *)
 Fixpoint mask_eqb (U V : mask) : bool :=
@@ -77,9 +81,11 @@ Fixpoint mask_consume (i : nat) (U : mask) : option mask :=
   | _, _ => None
   end.
 
-Lemma mask_consume_available : forall I i O,
-  In_opt O (mask_consume i I) -> In_opt true (nth_error I i).
+Lemma mask_consume_available : forall I i,
+  Is_some (mask_consume i I) -> In_opt true (nth_error I i).
 Proof.
+  intros I i H. apply Is_some_exists in H. destruct H as [O H].
+  revert i O H.
   induction I as [| b I IH]; intros [| i] O H; apply In_opt_Some in H;
     simpl in H; try discriminate.
   - destruct b; simpl in H; try discriminate. inversion H. reflexivity.
@@ -88,8 +94,9 @@ Proof.
 Qed.
 
 Lemma mask_consume_complete : forall I i,
-  In_opt true (nth_error I i) -> exists O, In_opt O (mask_consume i I).
+  In_opt true (nth_error I i) -> Is_some (mask_consume i I).
 Proof.
+  intros I i H. apply Is_some_exists. revert i H.
   induction I as [| b I IH]; intros [| i] H; simpl in H; try contradiction.
   - destruct b; simpl in H.
     + eexists. reflexivity.
@@ -99,11 +106,9 @@ Proof.
 Qed.
 
 Lemma mask_consume_iff : forall I i,
-  (exists O, In_opt O (mask_consume i I)) <-> In_opt true (nth_error I i).
+  Is_some (mask_consume i I) <-> In_opt true (nth_error I i).
 Proof.
-  split.
-  - intros [O H]. eapply mask_consume_available, H.
-  - apply mask_consume_complete.
+  split; [apply mask_consume_available | apply mask_consume_complete].
 Qed.
 
 (** [mask_comp U V] first restricts by [U], then by [V] inside the kept
@@ -329,6 +334,9 @@ Inductive SplitM : mask -> mask -> mask -> Prop :=
   | SplitMRight : forall I U F,
       SplitM I U F -> SplitM (true :: I) (false :: U) (true :: F).
 
+Lemma splitM_nil_inv : forall U F, SplitM [] U F -> U = [] /\ F = [].
+Proof. intros U F H. inversion H. auto. Qed.
+
 Lemma splitM_length : forall I U F,
   SplitM I U F -> length U = length I /\ length F = length I.
 Proof. intros I U F H. induction H; simpl; lia. Qed.
@@ -432,7 +440,8 @@ Lemma mask_consume_of_split : forall I i O,
   In_opt O (mask_consume i I).
 Proof.
   intros I i O Havailable Hsplit.
-  destruct (mask_consume_complete _ _ Havailable) as [F Hconsume].
+  pose proof (mask_consume_complete _ _ Havailable) as Hdefined.
+  apply Is_some_exists in Hdefined. destruct Hdefined as [F Hconsume].
   pose proof (mask_consume_split _ _ _ Hconsume) as Hcomputed.
   pose proof (splitM_right_unique _ _ _ _ Hcomputed Hsplit) as ->.
   exact Hconsume.
@@ -472,6 +481,25 @@ Proof.
   apply splitM_comm in H1. apply splitM_comm in H2.
   destruct (splitM_assoc _ _ _ _ _ H1 H2) as [AB [H3 H4]].
   exists AB. split; apply splitM_comm; assumption.
+Qed.
+
+(** Two independent partitions of disjoint parts can be transposed. This is
+    the pointwise analogue of rearranging a two-by-two resource matrix. *)
+Lemma splitM_interchange : forall I A B A1 A2 B1 B2,
+  SplitM I A B -> SplitM A A1 A2 -> SplitM B B1 B2 ->
+  exists I1 I2,
+    SplitM I I1 I2 /\ SplitM I1 A1 B1 /\ SplitM I2 A2 B2.
+Proof.
+  intros I A B A1 A2 B1 B2 Houter. revert A1 A2 B1 B2.
+  induction Houter; intros A1 A2 B1 B2 HA HB;
+    inversion HA; subst; inversion HB; subst.
+  all: try solve [exists [], []; repeat split; constructor].
+  all: match goal with
+  | IH : forall _ _ _ _, SplitM _ _ _ -> SplitM _ _ _ -> _,
+    HA' : SplitM _ _ _, HB' : SplitM _ _ _ |- _ =>
+      destruct (IH _ _ _ _ HA' HB') as [I1 [I2 [HI [HI1 HI2]]]]
+  end;
+  eexists; eexists; repeat split; constructor; eassumption.
 Qed.
 
 Lemma splitM_wf_whole : forall {A : Type} (L : list A) I U F,

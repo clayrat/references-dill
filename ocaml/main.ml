@@ -11,8 +11,8 @@
    a program is determined by the program alone (see Infer.v). [list] prints
    the catalog.
 
-   TODO: [run] and [girard] once their corresponding functions are
-   extracted; a text parser so that [check] accepts programs from files. *)
+   TODO: expose the extracted runner as a command, add [girard], and add a
+   text parser so that commands can accept programs from files. *)
 
 open Dillref
 
@@ -75,6 +75,27 @@ and pp_atom = function
   | (LVar _ | UVar _ | Loc _ | Unit | Pair _ | With _ | Nat _ | Bool _) as t ->
       pp t
   | t -> "(" ^ pp t ^ ")"
+
+let pp_store entries =
+  let pp_entry (address, contents) =
+    "ℓ" ^ string_of_int (int_of_nat address) ^ " ↦ " ^ pp contents
+  in
+  "[" ^ String.concat "; " (List.map pp_entry entries) ^ "]"
+
+let pp_config (store, e) = "(" ^ pp_store store ^ ", " ^ pp e ^ ")"
+
+let pp_run_result = function
+  | RValue config -> "value " ^ pp_config config
+  | RStuck config -> "stuck " ^ pp_config config
+  | Timeout config -> "timeout " ^ pp_config config
+
+let pp_store_event = function
+  | EventAlloc l -> "Alloc ℓ" ^ string_of_int (int_of_nat l)
+  | EventSwap l -> "Swap ℓ" ^ string_of_int (int_of_nat l)
+  | EventFree l -> "Free ℓ" ^ string_of_int (int_of_nat l)
+
+let pp_event_trace events =
+  "[" ^ String.concat "; " (List.map pp_store_event events) ^ "]"
 
 let pp_mask bits =
   "[" ^ String.concat "; " (List.map string_of_bool bits) ^ "]"
@@ -159,6 +180,28 @@ let regression () =
       end)
     store_examples;
   List.iter
+    (fun case ->
+      let name = evaluation_case_name case in
+      let actual = run_evaluation_case case in
+      let expected = expected_evaluation_case case in
+      if actual <> expected then begin
+        Printf.eprintf "%s: got %s, expected %s\n"
+          name (pp_run_result actual) (pp_run_result expected);
+        incr failures
+      end)
+    evaluation_examples;
+  List.iter
+    (fun case ->
+      let name = event_trace_case_name case in
+      let actual = run_event_trace_case case in
+      let expected = expected_event_trace_case case in
+      if actual <> expected then begin
+        Printf.eprintf "%s events: got %s, expected %s\n"
+          name (pp_event_trace actual) (pp_event_trace expected);
+        incr failures
+      end)
+    event_trace_examples;
+  List.iter
     (fun (name, (actual, expected)) ->
       if actual <> expected then begin
         Printf.eprintf "%s: address occurrences differ from the expected list\n" name;
@@ -178,7 +221,10 @@ let regression () =
     (List.length infer_edge_cases);
   Printf.printf "Binding examples: %d checked\n" (List.length binding_examples);
   Printf.printf "Name resolution: %d checked\n" (List.length resolution_examples);
-  Printf.printf "Store updates: %d checked\n" (List.length store_examples);
+  Printf.printf "Store operations: %d checked\n" (List.length store_examples);
+  Printf.printf "Evaluator runs: %d checked\n" (List.length evaluation_examples);
+  Printf.printf "Store event traces: %d checked\n"
+    (List.length event_trace_examples);
   Printf.printf "Address traversals: %d checked\n" (List.length location_examples);
   if !failures > 0 then exit 1
 

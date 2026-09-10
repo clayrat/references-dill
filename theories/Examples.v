@@ -2,13 +2,15 @@
 
     Core examples are complemented by named source terms and resolution checks.
     Typing derivations and rejection proofs cover every bundled source example
-    in both modes. Their evaluation has not yet been formalized. *)
+    in both modes. Executable evaluation checks include successful runs, stuck
+    configurations, allocation order, strong update, deallocation and timeout. *)
 
 From Stdlib Require Import List String Permutation Lia.
 From DILLref Require Import Prelude Ty Syntax Index Scoping Mask Split Typing Infer.
 From DILLref Require Import Renaming Substitution.
 From DILLref Require Import NamedSyntax Resolve.
-From DILLref Require Import Graph NatMap Store StoreTyping.
+From DILLref Require Import Graph NatMap Store Semantics StoreTyping.
+From DILLref Require Import StoreTypingSubst EvaluationContext Preservation.
 Import ListNotations.
 Open Scope string_scope.
 
@@ -398,6 +400,109 @@ Definition infer_matches_classification (e : term) : Prop :=
 
 End InferExamples.
 
+(** ** Executable evaluation examples *)
+Section EvaluationExamples.
+
+Definition evaluation_case : Type :=
+  (string * (nat * (config * run_result)))%type.
+
+Definition make_evaluation_case
+    (name : string) (fuel : nat) (initial : config) (expected : run_result)
+    : evaluation_case :=
+  (name, (fuel, (initial, expected))).
+
+Definition evaluation_case_name (case : evaluation_case) : string :=
+  fst case.
+
+Definition run_evaluation_case (case : evaluation_case) : run_result :=
+  runFuel (fst (snd case)) (fst (snd (snd case))).
+
+Definition expected_evaluation_case (case : evaluation_case) : run_result :=
+  snd (snd (snd case)).
+
+(** Expectations are written independently of [runFuel]. The cases expose
+    evaluation order at zero iterations, repeated forcing through addition,
+    allocation at fresh addresses, strong update, deallocation and both
+    nonterminal outcomes. *)
+Definition evaluation_examples : list evaluation_case :=
+  [ make_evaluation_case "add_two_three" 100 ([], add_two_three)
+      (RValue ([], Nat 5));
+    make_evaluation_case "iter_zero" 100 ([], iter_ref 0)
+      (RValue ([], Nat 0));
+    make_evaluation_case "iter_ref" 200 ([], iter_ref 2)
+      (RValue ([], Nat 0));
+    make_evaluation_case "iter_strict_seed" 10
+      ([], Iter (Nat 0) (Bang successor) (Succ (Nat 4)))
+      (RValue ([], Nat 5));
+    make_evaluation_case "counter" 200 ([], counter)
+      (RValue ([], Nat 1));
+    make_evaluation_case "bang_new_twice" 20 ([], bang_new_twice)
+      (RValue ([(1, Nat 0); (0, Nat 0)], Pair (Loc 0) (Loc 1)));
+    make_evaluation_case "affine_leak" 20 ([], affine_leak)
+      (RValue ([(0, Unit)], Nat 0));
+    make_evaluation_case "read_and_free" 20 ([], read_and_free 7)
+      (RValue ([], Nat 7));
+    make_evaluation_case "free_nonunit_stuck" 10 ([], free_nonunit)
+      (RStuck ([(0, Nat 0)], Free (Loc 0)));
+    make_evaluation_case "zero_fuel_timeout" 0 ([], Succ (Nat 0))
+      (Timeout ([], Succ (Nat 0))) ].
+
+Lemma evaluation_examples_correct :
+  Forall
+    (fun case => run_evaluation_case case = expected_evaluation_case case)
+    evaluation_examples.
+Proof. repeat constructor. Qed.
+
+(** Store-event expectations are independent data, rather than projections of
+    the expected final stores. They expose address reuse, argument order and
+    repeated forcing of the iterator step thunk. *)
+Definition event_trace_case : Type :=
+  (string * (nat * (config * list store_event)))%type.
+
+Definition make_event_trace_case
+    (name : string) (fuel : nat) (initial : config)
+    (expected : list store_event) : event_trace_case :=
+  (name, (fuel, (initial, expected))).
+
+Definition event_trace_case_name (case : event_trace_case) : string :=
+  fst case.
+
+Definition run_event_trace_case (case : event_trace_case) : list store_event :=
+  trace_result_events
+    (runFuelTrace (fst (snd case)) (fst (snd (snd case)))).
+
+Definition expected_event_trace_case (case : event_trace_case)
+    : list store_event :=
+  snd (snd (snd case)).
+
+Definition event_trace_examples : list event_trace_case :=
+  [ make_event_trace_case "counter" 200 ([], counter)
+      [EventAlloc 0; EventSwap 0; EventSwap 0; EventFree 0];
+    make_event_trace_case "iter_zero" 100 ([], iter_ref 0)
+      [EventAlloc 0; EventFree 0];
+    make_event_trace_case "iter_ref" 200 ([], iter_ref 2)
+      [EventAlloc 0; EventAlloc 1; EventFree 1;
+       EventAlloc 1; EventFree 1; EventFree 0];
+    make_event_trace_case "add_effects" 200 ([], add_effects)
+      [EventAlloc 0; EventSwap 0; EventFree 0;
+       EventAlloc 0; EventSwap 0; EventFree 0];
+    make_event_trace_case "nested_ref" 100 ([], nested_ref)
+      [EventAlloc 0; EventAlloc 1; EventSwap 1; EventFree 1; EventFree 0];
+    make_event_trace_case "lazy_shared_ref" 100 ([], lazy_shared_ref)
+      [EventAlloc 0; EventFree 0];
+    make_event_trace_case "bang_new_twice" 20 ([], bang_new_twice)
+      [EventAlloc 0; EventAlloc 1];
+    make_event_trace_case "affine_leak" 20 ([], affine_leak)
+      [EventAlloc 0] ].
+
+Lemma event_trace_examples_correct :
+  Forall
+    (fun case => run_event_trace_case case = expected_event_trace_case case)
+    event_trace_examples.
+Proof. repeat constructor. Qed.
+
+End EvaluationExamples.
+
 (** ** Checks against declarative typing *)
 Section TypingChecks.
 
@@ -527,8 +632,6 @@ Example promotion_capture_rejected : forall f,
   ~ has_type f [] [TRef TNat] [true] (Bang (LVar 0)) (TBang (TRef TNat)).
 Proof. intros. apply typing_bang_lvar_absurd. Qed.
 
-(** TODO: compare evaluation traces with the expected stores once the
-    operational semantics is available. *)
 End TypingChecks.
 
 (** ** Context permutations
@@ -577,7 +680,8 @@ End ContextPermutations.
 
 (** ** Binding operations
 
-    These syntax checks deliberately include open and runtime terms. They
+    These syntax checks deliberately include open terms and terms with
+    locations. They
     test capture avoidance independently of the typing restrictions on the
     images of shared variables. The same cases run after extraction. *)
 Section BindingOperations.
@@ -991,26 +1095,18 @@ End Classification.
 
     These are proofs of static configurations and a primitive store update,
     not evaluator runs. Concrete address examples use keys 0 and 1. *)
-Local Ltac derive_runtime :=
+Local Ltac derive_with_loc :=
   first [solve [eapply source_runtime; derive_type] |
     match goal with
-    | |- runtime_type ?f ?S ?G ?L _ _ (Loc ?l) (TRef ?a) =>
-        first [apply RTLoc with (i := 0); reflexivity |
-          apply RTLoc with (i := 1); reflexivity |
-          change (runtime_type f S G L (mask_zero (List.length L))
-            (mask_single (List.length S) 0) (Loc l) (TRef a));
-          apply RTLoc with (i := 0); reflexivity |
-          change (runtime_type f S G L (mask_zero (List.length L))
-            (mask_single (List.length S) 1) (Loc l) (TRef a));
-          apply RTLoc with (i := 1); reflexivity]
-    | |- runtime_type _ _ _ _ _ _ (Lam _ _) _ => apply RTLam; derive_runtime
-    | |- runtime_type _ _ _ _ _ _ (Pair _ _) _ =>
-        eapply RTPair; [ | | derive_runtime | derive_runtime]; repeat constructor
-    | |- runtime_type _ _ _ _ _ _ (LetPair _ _) _ =>
-        eapply RTLetPair; [ | | derive_runtime | derive_runtime]; repeat constructor
-    | |- runtime_type _ _ _ _ _ _ (With _ _) _ => apply RTWith; derive_runtime
-    | |- runtime_type _ _ _ _ _ _ (Swap _ _) _ =>
-        eapply RTSwap; [ | | derive_runtime | derive_runtime]; repeat constructor
+    | |- has_type_with_loc _ _ _ _ _ (Loc _) _ => apply TyLoc
+    | |- has_type_with_loc _ _ _ _ _ (Lam _ _) _ => apply TyLocLam; derive_with_loc
+    | |- has_type_with_loc _ _ _ _ _ (Pair _ _) _ =>
+        eapply TyLocPair; [ | | derive_with_loc | derive_with_loc]; repeat constructor
+    | |- has_type_with_loc _ _ _ _ _ (LetPair _ _) _ =>
+        eapply TyLocLetPair; [ | | derive_with_loc | derive_with_loc]; repeat constructor
+    | |- has_type_with_loc _ _ _ _ _ (With _ _) _ => apply TyLocWith; derive_with_loc
+    | |- has_type_with_loc _ _ _ _ _ (Swap _ _) _ =>
+        eapply TyLocSwap; [ | | derive_with_loc | derive_with_loc]; repeat constructor
     end].
 
 Section StoreExamples.
@@ -1025,19 +1121,21 @@ Definition cyclic_store : store := [(0, cyclic_value)].
 Definition cyclic_signature : store_sig := [(0, TLolli TUnit TUnit)].
 
 Lemma cyclic_value_typed : forall f,
-  runtime_type f cyclic_signature [] [] [] [true] cyclic_value (TLolli TUnit TUnit).
-Proof. intros. unfold cyclic_value, cyclic_signature. derive_runtime. Qed.
+  has_type_with_loc f [] [] [] cyclic_signature cyclic_value
+    (TLolli TUnit TUnit).
+Proof. intros. unfold cyclic_value, cyclic_signature. derive_with_loc. Qed.
 
 Lemma cyclic_store_balanced : forall f, store_balance f cyclic_store (Nat 0) TNat.
 Proof.
   intros f. eapply StoreBalance with (S := cyclic_signature)
-    (Rterm := [false]) (Rrest := [true]) (Rcells := [true]) (Rfree := [false]).
+    (Rterm := []) (Rrest := cyclic_signature)
+    (Rcells := cyclic_signature) (Rfree := []).
   - repeat constructor; simpl; tauto.
-  - eapply CellsCons with (Rc := [true]) (Rt := [false]);
+  - eapply CellsCons with (Rc := cyclic_signature) (Rt := []);
       [constructor | apply cyclic_value_typed | repeat constructor | constructor].
-  - apply RTNat.
-  - repeat constructor.
-  - repeat constructor.
+  - apply TyLocNat.
+  - apply split_right.
+  - apply split_left.
   - reflexivity.
 Qed.
 
@@ -1067,16 +1165,16 @@ Lemma chain_configuration : forall f,
 Proof.
   intros f. split; [ | apply chain_store_acyclic].
   eapply StoreBalance with (S := chain_signature)
-    (Rterm := [false; true]) (Rrest := [true; false])
-    (Rcells := [true; false]) (Rfree := [false; false]).
+    (Rterm := [(1, TRef TUnit)]) (Rrest := [(0, TUnit)])
+    (Rcells := [(0, TUnit)]) (Rfree := []).
   - repeat constructor; simpl; intuition discriminate.
-  - eapply CellsCons with (Rc := [false; false]) (Rt := [true; false]);
-      [constructor | apply RTUnit | repeat constructor | ].
-    eapply CellsCons with (Rc := [true; false]) (Rt := [false; false]);
-      [constructor | unfold chain_signature; derive_runtime | repeat constructor | constructor].
-  - unfold chain_signature. derive_runtime.
+  - eapply CellsCons with (Rc := []) (Rt := [(0, TUnit)]);
+      [constructor | apply TyLocUnit | repeat constructor | ].
+    eapply CellsCons with (Rc := [(0, TUnit)]) (Rt := []);
+      [constructor | unfold chain_signature; derive_with_loc | repeat constructor | constructor].
+  - unfold chain_signature. derive_with_loc.
   - repeat constructor.
-  - repeat constructor.
+  - apply split_left.
   - reflexivity.
 Qed.
 
@@ -1088,13 +1186,13 @@ Lemma additive_address_configuration : forall f,
 Proof.
   intros f. split.
   - eapply StoreBalance with (S := [(0, TUnit)])
-      (Rterm := [true]) (Rrest := [false]) (Rcells := [false]) (Rfree := [false]).
+      (Rterm := [(0, TUnit)]) (Rrest := []) (Rcells := []) (Rfree := []).
     + repeat constructor; simpl; tauto.
-    + eapply CellsCons with (Rc := [false]) (Rt := [false]);
-        [constructor | apply RTUnit | repeat constructor | constructor].
-    + derive_runtime.
-    + repeat constructor.
-    + repeat constructor.
+    + eapply CellsCons with (Rc := []) (Rt := []);
+        [constructor | apply TyLocUnit | repeat constructor | constructor].
+    + derive_with_loc.
+    + apply split_left.
+    + constructor.
     + reflexivity.
   - apply graph_acyclic_rank with (rank := fun l => l).
     intros x y [v [[E | []] Hy]]. injection E as <- <-. contradiction.
@@ -1110,13 +1208,13 @@ Lemma swap_before_configuration : forall f,
 Proof.
   intros f. split.
   - eapply StoreBalance with (S := [(0, TNat)])
-      (Rterm := [true]) (Rrest := [false]) (Rcells := [false]) (Rfree := [false]).
+      (Rterm := [(0, TNat)]) (Rrest := []) (Rcells := []) (Rfree := []).
     + repeat constructor; simpl; tauto.
-    + eapply CellsCons with (Rc := [false]) (Rt := [false]);
-        [constructor | apply RTNat | repeat constructor | constructor].
-    + derive_runtime.
-    + repeat constructor.
-    + repeat constructor.
+    + eapply CellsCons with (Rc := []) (Rt := []);
+        [constructor | apply TyLocNat | repeat constructor | constructor].
+    + derive_with_loc.
+    + apply split_left.
+    + constructor.
     + reflexivity.
   - apply graph_acyclic_rank with (rank := fun l => l).
     intros x y [v [[E | []] Hy]]. injection E as <- <-. contradiction.
@@ -1125,18 +1223,9 @@ Qed.
 Lemma swap_after_configuration : forall f,
   configuration_typed f swap_after_store (Pair (Nat 7) (Loc 0)) (TTensor TNat (TRef TUnit)).
 Proof.
-  intros f. split.
-  - eapply StoreBalance with (S := natmap_replace 0 TUnit [(0, TNat)])
-      (Rterm := [true]) (Rrest := [false]) (Rcells := [false]) (Rfree := [false]).
-    + repeat constructor; simpl; tauto.
-    + eapply CellsCons with (Rc := [false]) (Rt := [false]);
-        [constructor | apply RTUnit | repeat constructor | constructor].
-    + cbn [natmap_replace]. derive_runtime.
-    + repeat constructor.
-    + repeat constructor.
-    + reflexivity.
-  - apply balanced_swap_acyclic with (f := f) (a := TTensor TNat (TRef TUnit)).
-    apply swap_before_configuration.
+  intros f. eapply configuration_preservation.
+  - apply StepSwapValue; [constructor | reflexivity].
+  - apply swap_before_configuration.
 Qed.
 
 Lemma dangling_address_rejected : forall f a, ~ store_balance f [] (Loc 0) a.
@@ -1162,10 +1251,11 @@ Proof.
   exists (Loc 0). simpl; auto.
 Qed.
 
-Lemma self_swap_rejected : forall f S G L U R a,
-  NoDup (natmap_domain S) -> ~ runtime_type f S G L U R (Swap (Loc 0) (Loc 0)) a.
+Lemma self_swap_rejected : forall f G L U R a,
+  NoDup (natmap_domain R) ->
+  ~ has_type_with_loc f G L U R (Swap (Loc 0) (Loc 0)) a.
 Proof.
-  intros f S G L U R a Hnd H. eapply runtime_swap_no_self_reference;
+  intros f G L U R a Hnd H. eapply runtime_swap_no_self_reference;
     [exact Hnd | exact H | simpl; auto].
 Qed.
 
@@ -1174,13 +1264,14 @@ Lemma affine_orphan_configuration : configuration_typed Affine [(0, Unit)] (Nat 
 Proof.
   split.
   - eapply StoreBalance with (S := [(0, TUnit)])
-      (Rterm := [false]) (Rrest := [true]) (Rcells := [false]) (Rfree := [true]).
+      (Rterm := []) (Rrest := [(0, TUnit)])
+      (Rcells := []) (Rfree := [(0, TUnit)]).
     + repeat constructor; simpl; tauto.
-    + eapply CellsCons with (Rc := [false]) (Rt := [false]);
-        [constructor | apply RTUnit | repeat constructor | constructor].
-    + apply RTNat.
-    + repeat constructor.
-    + repeat constructor.
+    + eapply CellsCons with (Rc := []) (Rt := []);
+        [constructor | apply TyLocUnit | repeat constructor | constructor].
+    + apply TyLocNat.
+    + apply split_right.
+    + apply split_right.
     + discriminate.
   - apply graph_acyclic_rank with (rank := fun l => l).
     intros x y [v [[E | []] Hy]]. injection E as <- <-. contradiction.
@@ -1191,22 +1282,22 @@ Proof.
   intros [S Rt Rr Rc Rf Hnd Hcells Hterm Hsplit Hrest Hmode].
   inversion Hcells; subst.
   match goal with
-  | Htail : cells_typed _ _ _ [] _ |- _ => inversion Htail; subst
+  | Htail : cells_typed _ _ [] _ |- _ => inversion Htail; subst
   end.
   apply runtime_nat_resources in Hterm. destruct Hterm as [_ ->].
   match goal with
-  | Hunit : runtime_type Linear _ _ _ _ _ Unit _ |- _ =>
+  | Hunit : has_type_with_loc Linear _ _ _ _ Unit _ |- _ =>
       apply runtime_unit_resources in Hunit; destruct Hunit as [_ ->]
   end.
   specialize (Hmode eq_refl). subst Rf.
   repeat match goal with
-  | H : SplitM _ _ _ |- _ => inversion H; subst; clear H
+  | H : Split _ _ _ |- _ => inversion H; subst; clear H
   end.
 Qed.
 
-Lemma promotion_address_rejected : forall f S G L U R a,
-  ~ runtime_type f S G L U R (Bang (Loc 0)) a.
-Proof. intros f S G L U R a H. apply runtime_bang_no_locations in H. discriminate. Qed.
+Lemma promotion_address_rejected : forall f G L U R a,
+  ~ has_type_with_loc f G L U R (Bang (Loc 0)) a.
+Proof. intros f G L U R a H. apply runtime_bang_no_locations in H. discriminate. Qed.
 
 (** Address 7 occupies position 0 of the signature, not position 7. *)
 Lemma sparse_address_configuration : forall f,
@@ -1214,28 +1305,112 @@ Lemma sparse_address_configuration : forall f,
 Proof.
   intros f. split.
   - eapply StoreBalance with (S := [(7, TUnit)])
-      (Rterm := [true]) (Rrest := [false]) (Rcells := [false]) (Rfree := [false]).
+      (Rterm := [(7, TUnit)]) (Rrest := []) (Rcells := []) (Rfree := []).
     + repeat constructor; simpl; tauto.
-    + eapply CellsCons with (Rc := [false]) (Rt := [false]);
-        [constructor | apply RTUnit | repeat constructor | constructor].
-    + derive_runtime.
-    + repeat constructor.
-    + repeat constructor.
+    + eapply CellsCons with (Rc := []) (Rt := []);
+        [constructor | apply TyLocUnit | repeat constructor | constructor].
+    + derive_with_loc.
+    + apply split_left.
+    + constructor.
     + reflexivity.
   - apply graph_acyclic_rank with (rank := fun l => l).
     intros x y [v [[E | []] Hy]]. injection E as <- <-. contradiction.
 Qed.
 End StoreExamples.
 
+(** ** Runtime metatheory examples
+
+    These small derivations exercise address-aware substitution, direct
+    location fragments and typed evaluation contexts. *)
+Section RuntimeMetatheoryExamples.
+
+(** Substituting an owned address for a resource variable transfers that
+    address right to the reduct. *)
+Lemma runtime_substitution_address_example : forall f,
+  has_type_with_loc f [] [] [] [(0, TUnit)]
+    (subst_l (Loc 0) (Free (LVar 0))) TUnit.
+Proof.
+  intros f. eapply has_type_with_loc_subst_l with
+    (U := []) (V := []) (Rbody := []) (Rarg := [(0, TUnit)])
+    (a := TRef TUnit).
+  - apply TyLocFree.
+    change (has_type_with_loc f [] [TRef TUnit]
+      (mask_single 1 0) [] (LVar 0) (TRef TUnit)).
+    apply TyLocLVar. reflexivity.
+  - apply TyLoc.
+  - constructor.
+  - apply split_right.
+Qed.
+
+(** A term records only the location fragment that it owns. *)
+Lemma direct_location_fragment_example : forall f,
+  has_type_with_loc f [] [] [] [(1, TUnit)] (Loc 1) (TRef TUnit).
+Proof. intros. apply TyLoc. Qed.
+
+Definition free_application_context : eval_context :=
+  ECFree (ECAppArg (Lam (TRef TUnit) (LVar 0)) ECHole).
+
+Lemma free_application_context_typed : forall f,
+  typed_eval_context f [] [] free_application_context
+    [] [(0, TUnit)] (TRef TUnit) [] [(0, TUnit)] TUnit.
+Proof.
+  intros f. unfold free_application_context. apply TCtxFree.
+  eapply TCtxAppArg with
+    (U1 := []) (U2 := []) (R1 := []) (R2 := [(0, TUnit)])
+    (a := TRef TUnit).
+  - constructor.
+  - apply TyLocLam.
+    change (has_type_with_loc f [] [TRef TUnit]
+      (mask_single 1 0) [] (LVar 0) (TRef TUnit)).
+    apply TyLocLVar. reflexivity.
+  - constructor.
+  - constructor.
+  - repeat constructor.
+Qed.
+
+Lemma free_application_context_filled : forall f,
+  has_type_with_loc f [] [] [] [(0, TUnit)]
+    (plug free_application_context (Loc 0)) TUnit.
+Proof.
+  intros f. eapply typed_eval_context_fill.
+  - apply free_application_context_typed.
+  - apply TyLoc.
+Qed.
+
+Lemma nested_context_step_example : forall s,
+  small_step (s, New (Succ (Nat 0))) (s, New (Nat 1)).
+Proof.
+  intros s. change (small_step
+    (s, plug (ECNew ECHole) (Succ (Nat 0)))
+    (s, plug (ECNew ECHole) (Nat 1))).
+  eapply small_step_under_context.
+  - repeat constructor.
+  - apply StepSuccNat.
+Qed.
+
+End RuntimeMetatheoryExamples.
+
 (** ** Executable store checks
 
-    These supplement the configuration proofs after extraction. *)
+    These supplement the configuration proofs after extraction. Allocation
+    inserts at the head, uses zero for an empty store and otherwise chooses
+    one above the greatest live key. *)
 Section StoreChecks.
 Definition store_examples : list (string * (store * store)) :=
   [("strong_update", (swap_after_store, [(0, Unit)]));
    ("update_address_key",
      (natmap_replace 7 (Loc 2) [(2, Unit); (7, Nat 3)], [(2, Unit); (7, Loc 2)]));
-   ("update_absent_key", (natmap_replace 7 Unit [(2, Nat 3)], [(2, Nat 3)]))].
+   ("update_absent_key", (natmap_replace 7 Unit [(2, Nat 3)], [(2, Nat 3)]));
+   ("allocate_empty",
+     (store_insert (fresh []) (Nat 4) [], [(0, Nat 4)]));
+   ("allocate_above_max",
+     (store_insert (fresh [(2, Unit); (7, Nat 3)]) (Bool true)
+       [(2, Unit); (7, Nat 3)],
+      [(8, Bool true); (2, Unit); (7, Nat 3)]));
+   ("remove_key",
+     (store_remove 7 [(2, Unit); (7, Nat 3)], [(2, Unit)]));
+   ("remove_absent_key",
+     (store_remove 7 [(2, Nat 3)], [(2, Nat 3)]))].
 
 Lemma store_examples_correct :
   Forall (fun p => fst (snd p) = snd (snd p)) store_examples.

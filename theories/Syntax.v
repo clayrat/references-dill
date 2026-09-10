@@ -26,9 +26,8 @@
     types [nat], [!(A ⊸ A)] and [A] and result [A]. The three arguments
     divide the resource context; the step thunk is re-evaluated at each
     iteration and only the accumulator carries resources between iterations.
-    Addition is a derived program.
-
-    TODO: operational rules for [Succ] and [Iter] with the store semantics. *)
+    Addition is a derived program. Operational rules for [Succ] and [Iter]
+    use the same store semantics as the other strict constructs. *)
 
 From Stdlib Require Import Bool List.
 From DILLref Require Import Ty.

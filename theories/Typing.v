@@ -105,7 +105,7 @@ Lemma typing_scoped : forall f G L U e a,
   has_type f G L U e a -> scoped (length G) (length L) e.
 Proof.
   intros f G L U e a H. induction H; simpl in *;
-    eauto using lookup_bound with scope_typing.
+    eauto using lookup_bound, In_opt_Is_some with scope_typing.
 Qed.
 
 Lemma typing_loc_free : forall f G L U e a,
@@ -131,7 +131,7 @@ Lemma typing_lvar_available : forall f G L U i a,
 Proof.
   intros f G L U i a H. remember (LVar i) as e eqn:E in H.
   induction H; inversion E; subst;
-    eauto using mask_single_nth, lookup_bound, mask_le_nth.
+    eauto using mask_single_nth, lookup_bound, In_opt_Is_some, mask_le_nth.
 Qed.
 
 Lemma typing_bang_body : forall f G L U e a,

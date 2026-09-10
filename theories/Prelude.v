@@ -4,7 +4,8 @@
     about lookups use it instead of the equation [o = Some x], so that a
     concrete lookup reduces by [simpl] to an equality of the contained value
     or to [False]. [In_opt_eq_Some] converts to the equational form when a
-    standard-library lemma needs it.
+    standard-library lemma needs it. [Is_some o] records only that [o]
+    contains a value, when the value itself is irrelevant.
 
     [bind] sequences partial computations and [guard] imposes a boolean
     side condition. Both unfold under [cbn], so a proof about a function
@@ -18,6 +19,23 @@ Definition Exists_opt {A : Type} (P : A -> Prop) (value : option A) : Prop :=
 
 Definition In_opt {A : Type} (expected : A) : option A -> Prop :=
   Exists_opt (eq expected).
+
+Definition Is_some {A : Type} (value : option A) : Prop :=
+  Exists_opt (fun _ => True) value.
+
+Lemma In_opt_Is_some {A : Type} {expected : A} {value : option A} :
+  In_opt expected value -> Is_some value.
+Proof. destruct value; cbn [In_opt Is_some Exists_opt]; auto. Qed.
+
+Lemma Is_some_exists {A : Type} (value : option A) :
+  Is_some value <-> exists actual, In_opt actual value.
+Proof.
+  destruct value as [actual |]; cbn [In_opt Is_some Exists_opt].
+  - split.
+    + intros _. exists actual. reflexivity.
+    + auto.
+  - split; [contradiction | intros [? impossible]; contradiction].
+Qed.
 
 Lemma In_opt_eq_Some {A : Type} (expected : A) (value : option A) :
   In_opt expected value <-> value = Some expected.

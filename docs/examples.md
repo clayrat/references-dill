@@ -10,8 +10,10 @@ The typing table is represented independently as `source_infer_expectations`.
 Rocq proves exact equality with the results computed by `infer` and relates
 those results to the declarative classifications. The extracted OCaml driver
 runs the same 37 programs in both modes and compares their types and leftovers.
-Execution traces and final stores remain a manual account until the evaluator
-is formalized.
+Ten representative `runFuel` outcomes and eight store-event traces are also
+specified independently and proved by computation in Rocq, then compared again
+after extraction. Formal traces record `Alloc l`, `Swap l`, and `Free l`; the
+prose below additionally shows the values stored and returned by those events.
 
 ## Typing coverage
 
@@ -96,10 +98,12 @@ proofs cover attempts to bypass this condition in affine mode.
 
 ## Expected values and stores
 
-Traces start in the empty store. `alloc ℓ v` creates a cell, `swap ℓ v → w`
-replaces its contents and returns the old contents, and `free ℓ` removes a unit
-cell. Addresses follow the specified allocator: zero for an empty store,
-otherwise one greater than the maximum live address. Freed addresses can be reused.
+Traces start in the empty store. `Alloc ℓ` creates a cell, `Swap ℓ` replaces
+its contents, and `Free ℓ` removes a unit cell. Addresses follow the specified
+allocator: zero for an empty store, otherwise one greater than the maximum live
+address. Freed addresses can be reused. The formal labels intentionally carry
+only the affected address; concrete payloads and returned values are shown in
+the explanatory traces below.
 
 | Program | Expected result | Expected final store |
 |---|---|---|
@@ -111,7 +115,8 @@ otherwise one greater than the maximum live address. Freed addresses can be reus
 | `iter_drops_acc` in affine mode | `0` | empty |
 | `affine_leak` in affine mode | `0` | `{ℓ0 ↦ ()}`; the reference was dropped |
 
-For `counter`, the trace is:
+For `counter`, the labelled trace is
+`[Alloc ℓ0; Swap ℓ0; Swap ℓ0; Free ℓ0]`. With payloads exposed, it is:
 
 ```text
 alloc 0 0
@@ -166,15 +171,17 @@ separately and allocate distinct live cells.
 `typing_loc_free` excludes addresses anywhere in a typed source term. The
 binding examples separately check that renaming and substitution leave `Loc`
 unchanged. `shadowed_resource` records the intended named reading as a core
-term; correctness of an actual name resolver remains a separate obligation.
+term, and the named examples separately check the resolver's treatment of
+shadowing across the two zones.
 
-Runtime examples are separate from the source catalog. `cyclic_store_balanced`
+Store examples are separate from the source catalog. `cyclic_store_balanced`
 and `cyclic_store_rejected` prove that the self-owned closure satisfies balance
 in both modes but violates the configuration invariant. Further examples cover
 an ownership chain, lazy sharing, strong update, sparse address keys, dangling
 addresses, aliases, self-swap, promotion capture and the mode-dependent orphan
 cell. [Store invariant](store-invariant.md) gives their interpretation and the
 scope of the swap proof. The Girard example still belongs to the translation
-work. Formal execution traces remain an obligation for the evaluator. The
-exhaustive bundled regression checks supplement the general checker soundness,
-completeness and framing theorems; they are not used in place of those proofs.
+work. `event_trace` connects labelled and silent executable steps to
+`small_step`, and `runFuelTrace` records the chronological labels while erasing
+exactly to `runFuel`. The bundled regression checks supplement these general
+evaluator correspondence theorems; they are not used in place of those proofs.

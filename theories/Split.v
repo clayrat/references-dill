@@ -107,10 +107,91 @@ Section Split.
     rewrite IHSplit. symmetry. apply PeanoNat.Nat.add_succ_r.
   Qed.
 
+  Lemma split_same_left_inv : forall l rs,
+    Split l l rs -> rs = [].
+  Proof.
+    intros l rs H. apply split_length in H.
+    assert (length rs = 0) by lia. destruct rs; auto; discriminate.
+  Qed.
+
   Lemma split_in : forall l ls rs,
     Split l ls rs -> forall x, In x l <-> In x ls \/ In x rs.
   Proof.
     intros l ls rs H x. induction H; simpl; tauto.
+  Qed.
+
+  Lemma split_nodup_left : forall l ls rs,
+    Split l ls rs -> NoDup l -> NoDup ls.
+  Proof.
+    intros l ls rs H. induction H; intros Hnd; inversion Hnd; subst; simpl.
+    - constructor.
+    - constructor.
+      + intros Hin. apply H2. eapply split_in; [exact H | left; exact Hin].
+      + apply IHSplit. exact H3.
+    - apply IHSplit. exact H3.
+  Qed.
+
+  Lemma split_nodup_right : forall l ls rs,
+    Split l ls rs -> NoDup l -> NoDup rs.
+  Proof.
+    intros l ls rs Hsplit Hnd.
+    apply split_comm in Hsplit. eapply split_nodup_left; eassumption.
+  Qed.
+
+  Lemma split_disjoint : forall l ls rs,
+    Split l ls rs -> NoDup l -> forall x, In x ls -> ~ In x rs.
+  Proof.
+    intros l ls rs H. induction H; intros Hnd y Hleft Hright; simpl in *;
+      inversion Hnd; subst.
+    - contradiction.
+    - destruct Hleft as [-> | Hleft].
+      + apply H2. eapply split_in; [exact H | right; exact Hright].
+      + eapply IHSplit; eassumption.
+    - destruct Hright as [-> | Hright].
+      + apply H2. eapply split_in; [exact H | left; exact Hleft].
+      + eapply IHSplit; eassumption.
+  Qed.
+
+  (** Divide two already separated owners in parallel. *)
+  Lemma split_interchange : forall l a b a1 a2 b1 b2,
+    Split l a b -> Split a a1 a2 -> Split b b1 b2 ->
+    exists l1 l2,
+      Split l l1 l2 /\ Split l1 a1 b1 /\ Split l2 a2 b2.
+  Proof.
+    intros l a b a1 a2 b1 b2 Hab. revert a1 a2 b1 b2.
+    induction Hab; intros a1 a2 b1 b2 Ha Hb.
+    - inversion Ha; inversion Hb; subst. exists [], []. repeat constructor.
+    - inversion Ha as [| ? ? ? ? Ha' | ? ? ? ? Ha']; subst.
+      + destruct (IHHab _ _ _ _ Ha' Hb) as [l1 [l2 [Hl [H1 H2]]]].
+        exists (x :: l1), l2. repeat split.
+        * apply SplitL. exact Hl.
+        * apply SplitL. exact H1.
+        * exact H2.
+      + destruct (IHHab _ _ _ _ Ha' Hb) as [l1 [l2 [Hl [H1 H2]]]].
+        exists l1, (x :: l2). repeat split.
+        * apply SplitR. exact Hl.
+        * exact H1.
+        * apply SplitL. exact H2.
+    - inversion Hb as [| ? ? ? ? Hb' | ? ? ? ? Hb']; subst.
+      + destruct (IHHab _ _ _ _ Ha Hb') as [l1 [l2 [Hl [H1 H2]]]].
+        exists (x :: l1), l2. repeat split.
+        * apply SplitL. exact Hl.
+        * apply SplitR. exact H1.
+        * exact H2.
+      + destruct (IHHab _ _ _ _ Ha Hb') as [l1 [l2 [Hl [H1 H2]]]].
+        exists l1, (x :: l2). repeat split.
+        * apply SplitR. exact Hl.
+        * exact H1.
+        * apply SplitR. exact H2.
+  Qed.
+
+  Lemma split_filter : forall (keep : A -> bool) l ls rs,
+    Split l ls rs ->
+    Split (filter keep l) (filter keep ls) (filter keep rs).
+  Proof.
+    intros keep l ls rs H. induction H; simpl; try constructor.
+    - destruct (keep x); simpl; [constructor | ]; exact IHSplit.
+    - destruct (keep x); simpl; [constructor | ]; exact IHSplit.
   Qed.
 
   Lemma split_permutation : forall l ls rs,
@@ -228,6 +309,56 @@ Section Split.
   Qed.
 
 End Split.
+
+Lemma split_map : forall {A B : Type} (f : A -> B) l ls rs,
+  Split l ls rs -> Split (map f l) (map f ls) (map f rs).
+Proof. intros A B f l ls rs H. induction H; simpl; constructor; assumption. Qed.
+
+(** Order-preserving inclusion, presented through the unused complement. *)
+Definition split_incl {A : Type} (small whole : list A) : Prop :=
+  exists frame, Split whole small frame.
+
+Lemma split_incl_refl : forall {A : Type} (l : list A), split_incl l l.
+Proof. intros. exists []. apply split_left. Qed.
+
+Lemma split_incl_left : forall {A : Type} (l a b : list A),
+  Split l a b -> split_incl a l.
+Proof. intros. exists b. exact H. Qed.
+
+Lemma split_incl_right : forall {A : Type} (l a b : list A),
+  Split l a b -> split_incl b l.
+Proof. intros. exists a. apply split_comm. exact H. Qed.
+
+Lemma split_incl_trans : forall {A : Type} (a b c : list A),
+  split_incl a b -> split_incl b c -> split_incl a c.
+Proof.
+  intros A a b c [ab Hab] [bc Hbc].
+  destruct (split_assoc _ _ _ _ _ Hbc Hab) as [frame [H _]].
+  exists frame. exact H.
+Qed.
+
+Lemma split_incl_left_trans : forall {A : Type} (whole left right outer : list A),
+  Split whole left right -> split_incl whole outer -> split_incl left outer.
+Proof.
+  intros A whole left right outer Hsplit Hincl.
+  eapply split_incl_trans; [eapply split_incl_left | exact Hincl].
+  exact Hsplit.
+Qed.
+
+Lemma split_incl_right_trans : forall {A : Type} (whole left right outer : list A),
+  Split whole left right -> split_incl whole outer -> split_incl right outer.
+Proof.
+  intros A whole left right outer Hsplit Hincl.
+  eapply split_incl_trans; [eapply split_incl_right | exact Hincl].
+  exact Hsplit.
+Qed.
+
+Lemma split_incl_in : forall {A : Type} (small whole : list A) x,
+  split_incl small whole -> In x small -> In x whole.
+Proof.
+  intros A small whole x [frame Hsplit] Hin.
+  apply (proj2 (split_in _ _ _ Hsplit x)). left. exact Hin.
+Qed.
 
 (** ** Mask splitting and positioned views *)
 

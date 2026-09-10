@@ -18,5 +18,12 @@ theories/Graph.v
 theories/NatMap.v
 theories/NatMapMask.v
 theories/Store.v
+theories/Semantics.v
 theories/StoreTyping.v
+theories/StoreTypingInversion.v
+theories/StoreTypingSubst.v
+theories/EvaluationContext.v
+theories/Preservation.v
+theories/Progress.v
+theories/Safety.v
 theories/Examples.v

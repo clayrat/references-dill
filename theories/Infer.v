@@ -408,7 +408,7 @@ Proof.
   intros i I O C J P Hconsume HI HJ.
   pose proof (mask_consume_split _ _ _ Hconsume) as Hsingle.
   pose proof (splitM_left_unique _ _ _ _ Hsingle HI) as HC. subst C.
-  pose proof (mask_consume_available _ _ _ Hconsume) as Havailable.
+  pose proof (mask_consume_available _ _ (In_opt_Is_some Hconsume)) as Havailable.
   apply In_opt_Some in Havailable.
   assert (Hbound : i < length I).
   { apply nth_error_Some. congruence. }

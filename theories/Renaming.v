@@ -5,7 +5,7 @@
     are never renamed. *)
 
 From Stdlib Require Import List Arith Lia.
-From DILLref Require Import Ty Syntax Index Scoping Mask OPE Typing.
+From DILLref Require Import Prelude Ty Syntax Index Scoping Mask OPE Typing.
 Import ListNotations.
 
 Fixpoint rename (ru rl : nat -> nat) (e : term) : term :=
@@ -76,6 +76,40 @@ Proof.
   all: constructor; unfold ren_scoped in *; eauto.
 Qed.
 
+Lemma rename_scoped_identity : forall g l e,
+  scoped g l e -> forall ru rl,
+  (forall i, i < g -> ru i = i) ->
+  (forall i, i < l -> rl i = i) ->
+  rename ru rl e = e.
+Proof.
+  intros g l e Hscope. induction Hscope; intros ru rl Hu Hl; simpl.
+  - rewrite Hl; auto.
+  - rewrite Hu; auto.
+  - reflexivity.
+  - f_equal. apply IHHscope; auto.
+    intros [| i] Hi; simpl; auto. f_equal. apply Hl. lia.
+  - f_equal; eauto.
+  - reflexivity.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto. apply IHHscope2; auto.
+    intros [| [| i]] Hi; simpl; auto. repeat f_equal. apply Hl. lia.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto. apply IHHscope2; auto.
+    intros [| i] Hi; simpl; auto. f_equal. apply Hu. lia.
+  - reflexivity.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - reflexivity.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto.
+  - f_equal; eauto.
+Qed.
+
 (** Shared renamings can identify variables. Resource scope extension below
     uses an OPE, which cannot identify or permute positions. Newly inserted
     resource positions are unavailable; this is valid even in linear mode. *)
@@ -86,7 +120,7 @@ Lemma typing_rename : forall f G L U e a,
 Proof.
   intros f G L U e a H. induction H; intros G' L' ru E HG HE; simpl;
     try rewrite (ope_mask_zero _ _ _ HE).
-  - rewrite (ope_mask_single _ _ _ _ _ HE H).
+  - rewrite (ope_mask_single _ _ _ _ HE (In_opt_Is_some H)).
     apply TyLVar. eapply ope_index_nth; eassumption.
   - apply TyUVar. apply HG, H.
   - apply TyLam.

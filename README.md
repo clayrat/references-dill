@@ -5,7 +5,7 @@ the `!` modality, iteration over natural numbers and linear references
 (`new`, `swap`, `free`), with a linear/affine switch on the resource zone.
 It centers on three executable
 algorithms: a type checker with leftover contexts, a small-step evaluator
-with a store and proved resource safety, and Girard's translation from the
+with a store and typed resource balance, and Girard's translation from the
 simply typed λ-calculus. Everything is extracted to a single OCaml tool.
 
 ## Status
@@ -17,12 +17,20 @@ type uniqueness, typed store balance and ownership acyclicity, proofs for
 the bundled source and store examples, an executable source type checker with
 leftover masks, extraction and an OCaml driver that checks the source catalog.
 The checker is proved sound, complete and stable under framing. The evaluator
-and the translation are not implemented yet.
+is executable and proved equivalent to an independent small-step relation.
+Address-aware substitution for terms with locations, direct location-context
+splitting, typed CBV evaluation contexts, preservation of typed store balance
+and ownership acyclicity, and progress of typed balanced configurations are
+proved. Multi-step evaluation preserves the complete configuration invariant,
+and the fuelled evaluator cannot produce `RStuck` from a typed configuration.
+Linear termination at type `nat` is also proved to leave an empty store, and
+event lifetimes rule out two frees without a new allocation of that address.
+The translation remains to be implemented.
 
 | Component | Status |
 |---|---|
 | types and core AST with independent resource/shared indices | formalized |
-| natural literals, `Succ`, linear `Iter`; derived addition | syntax and source typing defined; evaluation planned |
+| natural literals, `Succ`, linear `Iter`; derived addition | syntax, typing and CBV evaluation defined; representative runs checked |
 | `Split` with unit, commutativity, associativity, permutation transport and keyed correspondence | formalized |
 | availability masks as OPEs: equality, positional consumption, `select`, positioned `view`, identity, composition, `ope_index`, category laws | formalized |
 | zero/singleton masks, inclusion, intersection, relative remainder and `SplitM` laws | formalized |
@@ -32,16 +40,17 @@ and the translation are not implemented yet.
 | type uniqueness at fixed scopes, allowing different masks and modes | proved |
 | two-zone renaming and substitution preserve scoping; typed substitution in both modes | proved |
 | shared weakening/contraction, resource scope extension and adjacent resource exchange | proved |
-| 37 source examples as core AST | classification, lexical scoping and exact checker results proved for the entire catalog; evaluation planned |
+| 37 source examples as core AST | classification, lexical scoping and exact checker results proved for the entire catalog; 10 representative evaluator outcomes and 8 store-event traces proved |
 | type inference `infer` with leftover masks | implemented and extracted with regression checks; soundness, mode-sensitive completeness and framing proved |
 | `check_open` and `check_program` for open terms and closed programs | proved sound and complete: linear mode requires every available resource to be consumed |
-| finite stores, runtime typing, typed resource balance and ownership acyclicity | formalized; primitive root swap preserves acyclicity |
+| finite stores, typing with locations, typed resource balance and ownership acyclicity | formalized; every typed operational step preserves balance and acyclicity; every cell in a linear typed configuration is reachable from the running term |
+| substitution with locations, keyed location-context updates and typed CBV contexts | proved for lexical masks and direct location fragments in both modes |
 | cyclic store, ownership chains, strong update and invalid ownership examples | configuration proofs and rejection proofs in Rocq |
-| `step`, `runFuel`, preservation, progress, acyclicity of all steps, `no_leak` | planned |
+| `step`, `runFuel`, labelled store events, preservation, progress, acyclicity of all steps, `no_leak`, `no_double_free` | evaluator and traced runner implemented and extracted; relational correspondence, event lifetimes, multi-step configuration preservation, progress, exclusion of `SStuck`/`RStuck`, linear `no_leak`, and lifetime-sensitive `no_double_free` proved |
 | `girard`, `girard_typing`, `girard_simulation` | planned |
 | named source AST, lexical shadowing across zones and name resolution | implemented and extracted; declarative resolution correspondence and scope safety proved; 19 resolution checks |
 | text parser and detailed name diagnostics | not implemented; named inputs use AST constructors |
-| OCaml tool `dillref` with `check`, `run`, `girard` and `--affine` | `check [--affine] NAME` over the bundled catalog via the proved `check_program`; `run` and `girard` planned |
+| OCaml tool `dillref` with `check`, `run`, `girard` and `--affine` | `check [--affine] NAME` is available; extracted evaluator runs are regression-tested, while interactive `run` and `girard` are planned |
 
 Unfinished results are marked as TODOs, without `Admitted`, axioms, or
 checker stubs that report success.
@@ -72,11 +81,12 @@ is the innermost resource binder and `u0` the innermost shared binder. It runs
 the extracted checker on all 37 programs in both modes and on 19 open or
 malformed edge cases, comparing exact types and leftovers with independently
 specified results. Five additional checks exercise renaming and substitution
-under binders and preservation of runtime addresses. Three store-update checks,
-two address-traversal checks and nineteen name-resolution checks also run after
-extraction.
-Configuration typing and acyclicity are propositions
-proved in Rocq; the driver does not decide them or run an evaluator.
+under binders and preservation of runtime addresses. Seven store-operation
+checks, ten evaluator runs, eight chronological store-event traces, two
+address-traversal checks and nineteen name-resolution checks also run after
+extraction. The runs cover values with final stores, stuck execution and fuel
+exhaustion. Configuration typing and acyclicity are propositions proved in
+Rocq; the driver does not decide them.
 
 The built tool also accepts subcommands:
 
@@ -94,6 +104,7 @@ program prints `rejected` and makes the exit code nonzero.
 
 | Path | Purpose |
 |---|---|
+| `theories/Prelude.v` | Option predicates: exact result membership with `In_opt` and result existence with `Is_some` |
 | `theories/Ty.v` | Types and decidable equality |
 | `theories/Syntax.v` | Linear/affine flag, core AST, binding conventions, `loc_free`, values and address occurrences |
 | `theories/Index.v` | Index maps, lifting, scope bounds and preservation of entries in polymorphic lists |
@@ -105,19 +116,26 @@ program prints `rejected` and makes the exit code nonzero.
 | `theories/Resolve.v` | Name lookup and resolution, declarative correspondence, scope safety and absence of addresses |
 | `theories/Typing.v` | Declarative source typing, general affine weakening, generation, invariants and type uniqueness |
 | `theories/Infer.v` | Executable type inference with leftover resource masks, `check_open` and `check_program` |
-| `theories/Renaming.v` | Two-zone renaming, identity/composition, scoping, typed scope extension and shared contraction |
+| `theories/Renaming.v` | Two-zone renaming, identity/composition on scoped terms, typed scope extension and shared contraction |
 | `theories/Substitution.v` | Simultaneous substitution, typed environments, substitution theorems and adjacent resource exchange |
-| `theories/Graph.v` | Positive paths, acyclicity, decreasing ranks and edge updates over arbitrary vertex types |
-| `theories/NatMap.v` | `NatMap A := list (nat * A)`, domain, lookup, replacement and key uniqueness laws |
+| `theories/Graph.v` | Positive paths, acyclicity, finite root reachability, decreasing ranks and edge updates over arbitrary vertex types |
+| `theories/NatMap.v` | `NatMap A := list (nat * A)`, lookup, head insertion, key removal, replacement, fresh-key selection and their laws |
 | `theories/NatMapMask.v` | Keys selected by positional masks, monotonicity, domain membership and disjointness under unique keys |
-| `theories/Store.v` | Stores and signatures as `NatMap term` and `NatMap ty`, reference edges and acyclicity under cell replacement |
-| `theories/StoreTyping.v` | Term typing with address resources, source embedding, typed cells, global balance, configuration invariant and root swap acyclicity |
-| `theories/Examples.v` | Source classification, named programs and resolution checks, context permutations, store configurations and rejection proofs |
+| `theories/Store.v` | Synchronized store/signature operations, deterministic fresh allocation, reference edges and acyclicity under insertion, removal and replacement |
+| `theories/Semantics.v` | Executable CBV `step`, `runFuel` and single-pass `runFuelTrace`; each step returns its optional `Alloc`/`Swap`/`Free` event together with the next configuration, with independent small-step semantics and decomposition into an operational context and labelled head step |
+| `theories/StoreTyping.v` | Term typing with address resources, signature partition laws, exact linear ownership, typed cells, global balance, configuration invariant and root reachability |
+| `theories/StoreTypingInversion.v` | Syntax-directed generation, canonical forms, typed cell lookup, replacement and removal for typing with locations |
+| `theories/StoreTypingSubst.v` | Renaming and substitution for terms with locations and split location environments |
+| `theories/EvaluationContext.v` | Typing and inversion of filled CBV contexts, stable store frames and typed hole filling/replacement |
+| `theories/Preservation.v` | Preservation of typed store balance via context framing and the four head-step classes, for every relational and executable evaluator step |
+| `theories/Progress.v` | Progress of typed balanced configurations and exclusion of executable `SStuck` results |
+| `theories/Safety.v` | Multi-step configuration preservation, absence of dangling locations, exclusion of `RStuck`, event lifetimes, `no_double_free`, and linear `no_leak` |
+| `theories/Examples.v` | Source classification, named programs and resolution checks, context permutations, store configurations, event-trace checks and rejection proofs |
 | `theories/ExtractDILLref.v` | Extraction, compiled by `make extract` |
 | `ocaml/main.ml` | Driver for the extracted code |
 | `docs/roadmap.md` | Milestone tracking |
-| `docs/examples.md` | Typing coverage and manual expected values and store traces |
-| `docs/store-invariant.md` | Runtime resource balance, cyclic counterexample and the strong-update argument |
+| `docs/examples.md` | Typing coverage, checked expected values and store-event traces |
+| `docs/store-invariant.md` | Resource balance for terms with locations, cyclic counterexample and the strong-update argument |
 | `lecture/README.md` | Lecture outline |
 
 `ExtractDILLref.v` is not listed in `_CoqProject` so that the library build
@@ -146,8 +164,8 @@ Computing Surveys 54(5), 2021, §1).
 Natural numbers have literals `Nat n`, strict successor `Succ e`, and the
 fully applied iterator `Iter count step seed`. For each accumulator type `A`,
 its argument types are `nat`, `!(A ⊸ A)` and `A`, and its result type is `A`.
-The resource context is split among all three arguments. The intended CBV
-semantics evaluates them in that order, including the seed at count zero.
+The resource context is split among all three arguments. The CBV semantics
+evaluates them in that order, including the seed at count zero.
 The boxed step's body is evaluated afresh on each iteration; at zero it is
 not evaluated. An accumulator can own a reference and pass it to the next
 iteration. The step thunk cannot capture an external resource under promotion.
@@ -161,9 +179,11 @@ capture, duplicated use and affine dropping of the accumulator. Every bundled
 source program has a proved classification in both modes. The catalog includes
 the modal maps, counter, references inside closures and cells, lazy sharing,
 branch leftovers and local weakening. [Example coverage](docs/examples.md)
-records the proofs and manual expected execution traces. Operational semantics
-remains pending; general recursion and a normalization theorem are outside the
-scope of this project.
+records the proofs, checked final configurations and event traces.
+Operational preservation of store balance and ownership acyclicity, progress,
+no-dangling, lifetime-sensitive no-double-free, and linear no-leak are proved.
+General
+recursion and a normalization theorem are outside the scope of this project.
 
 `scoped g l e` checks only lexical bounds, so runtime addresses are admitted by
 that judgment. Source typing has no address rule and implies `loc_free e = true`.
@@ -254,7 +274,10 @@ variables using `SplitM`. This includes affine derivations with weakening
 at any node. `typing_subst_l` consumes a resource binder with an explicit
 split between the argument and the remaining body; `typing_subst_u` allows
 a resource-free term to replace a shared binder. These are source typing
-theorems; runtime preservation with store addresses remains to be developed.
+theorems. `StoreTypingSubst.v` lifts the construction to `has_type_with_loc`:
+linear images distribute both lexical masks and direct location fragments,
+while shared images have zero demand in both zones. Its binder-specialized corollaries cover the
+β-rules for linear and shared variables.
 
 Typed scope extension uses OPEs and inserts unavailable resource positions
 in either mode. Adding available but unused resources uses `TyWeak` and is
@@ -262,23 +285,27 @@ restricted to affine mode. Shared renaming permits contraction; adjacent
 resource exchange permutes the scope, mask and term together.
 
 `NatMap.v` provides association lists with natural-number keys and polymorphic
-operations `natmap_domain`, `natmap_lookup` and `natmap_replace`. Lookup returns
-the first matching entry; replacement updates all matching entries and preserves
-keys and order. `Store.v` specializes this representation to terms and types.
-Unique keys are a separate store-balance requirement.
+lookup, head insertion, key removal, replacement and fresh-key selection.
+Lookup returns the first matching entry; replacement updates all matching
+entries, while removal deletes every matching entry and preserves the order of
+the others. `fresh` is zero for an empty store and one above the maximum live
+key otherwise. `Store.v` specializes these operations to terms and signatures.
+Unique keys are a separate store-balance requirement and are preserved by
+fresh insertion and removal.
 
 `NatMapMask.v` relates the two libraries through `masked_key m U k`: key `k`
 occurs at a position selected by `U`. The definition and its monotonicity and
 domain lemmas are polymorphic in the payload. Disjoint masks imply disjoint
-selected keys when `natmap_domain m` has no duplicates. Runtime typing and
-store balance use this relation at `m : NatMap ty`.
+selected keys when `natmap_domain m` has no duplicates. Runtime store typing now
+uses direct `store_sig` fragments instead; the generic positional bridge remains
+available independently.
 
 References are exclusive rights to a cell: `swap` performs a strong update and
 returns the old contents together with the rebound reference, and `free`
-accepts only `ref unit`. `runtime_type f S G L U R e A` adds an address mask
-`R` over the store signature `S`, independently of the lexical mask `U`.
-`Loc l` uses an address key; binders never shift it. `store_balance` partitions
-the signature's rights among the term, all stored values and an affine
+accepts only `ref unit`. `has_type_with_loc f G L U R e A` assigns the term a
+direct location fragment `R : store_sig`, independently of the lexical mask `U`.
+`Loc l` owns exactly `[(l, A)]`; binders never shift the key. `store_balance` partitions
+the full signature with `Split` among the term, all stored values and an affine
 residual. `configuration_typed` additionally requires ownership acyclicity.
 Edges include addresses in closures and lazy components. `StoreTyping.v`
 develops these judgments in order: terms with addresses, cell typing and
@@ -293,18 +320,41 @@ runtime typing and the balance lemmas in `StoreTyping.v` establish their
 exclusive-ownership interpretation.
 
 The cyclic closure example proves that even linear balance alone admits a
-self-owned cell. `balanced_swap_acyclic` proves graph preservation for a
-primitive swap at the root, using disjoint ownership of the target address.
+self-owned cell. `joint_swap_acyclic` proves graph preservation for a focused
+primitive swap, using the joint partition to exclude incoming ownership of the
+target address. `ownership_acyclic_preserved` covers every relational step;
+`configuration_preservation` and `step_configuration_preservation` preserve
+the complete invariant for relational and executable steps respectively.
+Both proofs decompose a reduction into a typed CBV context and one head step;
+the context contributes a stable `Split` frame, while only the focused redex
+and its owned cells participate in the store-changing argument.
+Separately, `Progress.v` proves that `progress` gives either a value or a
+relational step for every typed configuration, and
+`typed_configuration_not_stuck` transfers this result to the executable
+classifier. Common inversion and canonical-form lemmas live in
+`StoreTypingInversion.v`, so progress has no dependency on preservation.
+`Safety.v` composes both results over `reaches`, preserves configuration typing
+for every runner result, proves that every location mentioned by a typed
+configuration is allocated, and rules out `RStuck` for every fuel bound.
+The event trace determines the live-address set at every point and proves that
+two `Free l` events require an intervening `Alloc l`.
+Exact linear balance and finite acyclicity additionally prove that every
+allocated cell is reachable from a location owned by the running term. Hence
+`no_leak` shows that a terminating closed linear program of type `nat` has an
+empty final store.
 Strong update is illustrated with a cell whose type changes from `nat` to
 `unit`. [The invariant and proof boundaries](docs/store-invariant.md) describe
-the remaining runtime substitution, signature transport and operational
-preservation obligations.
+the preservation and resource-safety proofs. Strong
+update maps the selected key through the enclosing `Split` partitions; disjoint
+sibling, cell and frame fragments remain unchanged.
 
-The planned safety results for typed programs started
-from the empty store are absence of dangling references and double frees in
-both modes, and an empty final store for closed programs of type `nat` in
-linear mode. The last result relies on an ownership-acyclicity invariant in
-addition to the resource balance.
+Every actual event trace satisfies `no_double_free`: two `Free l` events must
+be separated by `Alloc l`, so reuse of the same numeric address begins a new
+lifetime. For typed configurations, the state immediately after `Free l`
+contains that address in neither the residual term nor any remaining cell.
+An empty final store is additionally proved for terminating closed linear
+programs of type `nat`; this uses ownership acyclicity and exact resource
+balance.
 
 Rocq verification and trust in the extraction and OCaml toolchain remain
 separate assurance boundaries.
